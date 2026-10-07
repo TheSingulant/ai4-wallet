@@ -37,16 +37,16 @@ export function phase1ReadinessLine(readiness: Phase1SigningReadiness): string {
 
 export function messageHashLine(session: SigningSession): string {
   if (!session.prepared) {
-    return "Exact message SHA-256: none.";
+    return "Exact message binding: none.";
   }
-  return `Exact message SHA-256: ${session.prepared.messageSha256}`;
+  return `Exact message binding: ${session.prepared.messageSha256}`;
 }
 
 export function auditDigestLine(session: SigningSession): string {
   if (!session.prepared) {
-    return "Audit digest SHA-256: none.";
+    return "Intent binding: none.";
   }
-  return `Audit digest SHA-256: ${session.prepared.bindingSha256}. ${PRODUCT.auditNote}`;
+  return `Intent binding: ${session.prepared.bindingSha256}. ${PRODUCT.auditNote}`;
 }
 
 export function blockhashLine(session: SigningSession): string {

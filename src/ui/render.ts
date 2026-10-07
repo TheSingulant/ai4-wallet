@@ -55,10 +55,11 @@ export function renderApp(
   root.replaceChildren();
 
   root.append(
+    postureStrip(),
     el("header", {}, [
       el("h1", {}, [view.title]),
       el("p", {}, [view.subtitle]),
-      el("p", {}, [view.custody]),
+      el("p", { "data-testid": "custody" }, [view.custody]),
       el("p", { "data-testid": "verify-status" }, [view.verify]),
       el("p", {}, [view.phase]),
     ]),
@@ -95,7 +96,6 @@ function constraintSection(
     button("ALLOW fixture", () => handlers.onFixture("allow")),
     button("REVISE fixture", () => handlers.onFixture("revise")),
     button("REFUSE fixture", () => handlers.onFixture("refuse")),
-    button("Attempt mainnet", handlers.onMainnet),
     button("Use DevNet intent", handlers.onDevnetIntent),
     el("p", { "data-testid": "decision" }, [view.constraintLine]),
   ];
@@ -105,7 +105,11 @@ function constraintSection(
   const reasons = showPhase0Readiness
     ? view.reasons
     : view.reasons.filter((reason) => reason !== "Phase 0 does not request signatures");
-  children.push(list(reasons, "reasons"), el("h3", {}, ["Approved binding"]), list(view.bindingLines, "binding"));
+  children.push(
+    list(reasons, "reasons"),
+    el("h3", {}, ["Approved binding"]),
+    list(view.bindingLines, "binding", "technical-detail"),
+  );
   return el("section", {}, children);
 }
 
@@ -130,16 +134,18 @@ function phase1Section(state: RenderState, handlers: RenderHandlers): HTMLElemen
     el("p", {}, [
       "Native SOL transfer. The app DevNet RPC builds the message. Phantom signs that message. This page does not broadcast it.",
     ]),
-    el("p", { "data-testid": "rpc-url" }, [`App DevNet RPC: ${state.phase1.rpcUrl}.`]),
+    el("p", { "data-testid": "rpc-url", class: "technical-detail" }, [
+      `App DevNet RPC: ${state.phase1.rpcUrl}.`,
+    ]),
     el("p", { "data-testid": "genesis-status" }, [genesisStatusLine(session)]),
     el("p", { "data-testid": "phase1-readiness" }, [phase1ReadinessLine(session.readiness)]),
-    el("p", { "data-testid": "fee-payer" }, [feePayerLine(session)]),
-    el("p", { "data-testid": "message-hash" }, [messageHashLine(session)]),
-    el("p", { "data-testid": "audit-digest" }, [auditDigestLine(session)]),
-    el("p", { "data-testid": "blockhash" }, [blockhashLine(session)]),
+    el("p", { "data-testid": "fee-payer", class: "technical-detail" }, [feePayerLine(session)]),
+    el("p", { "data-testid": "message-hash", class: "technical-detail" }, [messageHashLine(session)]),
+    el("p", { "data-testid": "audit-digest", class: "technical-detail" }, [auditDigestLine(session)]),
+    el("p", { "data-testid": "blockhash", class: "technical-detail" }, [blockhashLine(session)]),
     el("p", { "data-testid": "phase1-note" }, [session.note]),
     el("p", { "data-testid": "broadcast-status" }, [PRODUCT.notBroadcast]),
-    el("p", { "data-testid": "signed-result" }, [signedResultLine(session)]),
+    el("p", { "data-testid": "signed-result", class: "technical-detail" }, [signedResultLine(session)]),
     prepareButton,
     signButton,
   ]);
@@ -182,8 +188,20 @@ function field(label: string, name: string, value: string): HTMLElement {
   return el("label", {}, [label, input]);
 }
 
-function list(items: readonly string[], testId: string): HTMLElement {
-  const ul = el("ul", { "data-testid": testId }, []);
+function postureStrip(): HTMLElement {
+  return el("section", { "data-testid": "posture-strip" }, [
+    el("p", { "data-testid": "posture-devnet-only" }, [PRODUCT.postureDevnetOnly]),
+    el("p", { "data-testid": "posture-local-signature-only" }, [PRODUCT.postureLocalSignatureOnly]),
+    el("p", { "data-testid": "posture-not-broadcast" }, [PRODUCT.postureNotBroadcast]),
+  ]);
+}
+
+function list(items: readonly string[], testId: string, className?: string): HTMLElement {
+  const attrs: Record<string, string> = { "data-testid": testId };
+  if (className) {
+    attrs.class = className;
+  }
+  const ul = el("ul", attrs, []);
   for (const item of items) {
     ul.append(el("li", {}, [item]));
   }

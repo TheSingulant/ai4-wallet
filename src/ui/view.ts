@@ -53,13 +53,15 @@ export function buildView(evaluation: PreviewEvaluation, wallet: WalletSnapshot)
         ];
 
   const guardNote = isDevnet(evaluation.networkDisplay) ? "" : " Phase 0 requires DevNet.";
+  const networkLabel =
+    evaluation.networkDisplay === "DevNet" ? "Solana DevNet" : evaluation.networkDisplay;
 
   return {
     title: PRODUCT.title,
     subtitle: PRODUCT.subtitle,
     custody: PRODUCT.custody,
     verify: verifyLine(evaluation.verify),
-    networkLine: `Network: ${evaluation.networkDisplay}.${guardNote}`.trim(),
+    networkLine: `Network: ${networkLabel}.${guardNote}`.trim(),
     requiredLine: "Required network: DevNet.",
     walletLine: walletLine(wallet),
     constraintLine: constraintResultLine(evaluation),
