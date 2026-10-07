@@ -1,3 +1,4 @@
+import type { Transaction } from "@solana/web3.js";
 import { DISCONNECTED_WALLET, type WalletSnapshot } from "../domain/types";
 import type { WalletAdapter, WalletDetection, WalletScope } from "./types";
 
@@ -26,6 +27,40 @@ export function detectPhantom(scope: WalletScope): WalletDetection {
   return { adapterId: "phantom", present: provider !== null };
 }
 
+interface PhantomSigner {
+  signTransaction(transaction: Transaction): Promise<Transaction>;
+}
+
+function readSigner(value: unknown): PhantomSigner | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const record = value as {
+    isPhantom?: boolean;
+    signTransaction?: (transaction: Transaction) => Promise<Transaction>;
+  };
+  if (record.isPhantom !== true || typeof record.signTransaction !== "function") {
+    return null;
+  }
+  const signTransaction = record.signTransaction.bind(record);
+  return { signTransaction };
+}
+
+/**
+ * The only Phantom signature call in this repository.
+ * It signs the transaction it is given. It does not send that transaction.
+ */
+export async function signTransaction(
+  scope: WalletScope,
+  transaction: Transaction,
+): Promise<Transaction> {
+  const signer = readSigner(scope.getProvider("phantom"));
+  if (!signer) {
+    throw new Error("Phantom signTransaction is unavailable");
+  }
+  return signer.signTransaction(transaction);
+}
+
 export async function connectPhantom(scope: WalletScope): Promise<WalletSnapshot> {
   const provider = readProvider(scope.getProvider("phantom"));
   if (!provider) {
@@ -52,6 +87,7 @@ export const phantomAdapter: WalletAdapter = {
   chainFamily: "solana",
   detect: detectPhantom,
   connect: connectPhantom,
+  signTransaction,
 };
 
 export function browserWalletScope(): WalletScope {

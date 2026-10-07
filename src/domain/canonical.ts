@@ -35,10 +35,36 @@ export function canonicalSerializedTx(binding: ApprovedBinding): string {
   ].join("|");
 }
 
+function hex(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export async function sha256Hex(message: string): Promise<string> {
-  const bytes = new TextEncoder().encode(message);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return sha256Bytes(new TextEncoder().encode(message));
+}
+
+/** SHA-256 over raw bytes. Used for the exact Solana message, not for UTF-8 JSON. */
+export async function sha256Bytes(bytes: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", copy);
+  return hex(new Uint8Array(digest));
+}
+
+export function copyBytes(bytes: Uint8Array): Uint8Array {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
+export function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) {
+    return false;
+  }
+  for (let i = 0; i < left.byteLength; i += 1) {
+    if (left[i] !== right[i]) {
+      return false;
+    }
+  }
+  return true;
 }

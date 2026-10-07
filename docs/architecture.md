@@ -24,15 +24,15 @@ fixture intent
   -> Verify status from the preview stub
 ```
 
-The signing handoff stays empty. Signing readiness never reaches ready. The page does not request a signature and does not send a transaction.
+Phase 0 keeps `signingHandoff` empty. Its evaluator never reaches ready, and it does not request a signature or send a transaction. Phase 1 readiness is a separate field. It can reach ready only after the exact message is bound. Phase 1 still does not send a transaction.
 
 ## Signing boundary
 
-The wallet adapter interface exposes `detect` and `connect`. It does not expose a sign method or a send method. `connect` reads a public key only. It does not read `provider.cluster`, and it does not read private key fields. The public key is an identity. It is not a network.
+The wallet adapter interface exposes `detect`, `connect`, and one `signTransaction` method. It does not expose a send method. `connect` reads a public key only. It does not read a cluster from the provider, and it does not read private key fields. The public key is an identity. It is not a network. `signTransaction` is called only after the Phase 1 pre-sign checks pass, and only with the previously prepared legacy transaction.
 
 `signingHandoff` is null for ALLOW, REVISE, REFUSE, and DENY. Signing readiness is a separate field. ALLOW still carries a frozen `approvedBinding` when the DevNet intent passes the local checks. REVISE, REFUSE, and DENY do not carry `approvedBinding` and do not carry a serialized transaction.
 
-Phase 1 cannot add a sign path on this binding alone. The audit digest has to be extended with exact message bytes before any signature request exists. That path is not present here.
+Phase 1 cannot add a sign path on this binding alone. The audit digest has to be extended with exact message bytes before any signature request exists. That extension is the exact-message hash below. The six-field digest is still not a signature authorization.
 
 ## Network authority
 
@@ -40,7 +40,7 @@ Phase 0 network authority is the local preview configuration. The only accepted 
 
 This matches the DevNet-only posture of the ai4-constrain DevNet end-to-end path. It is stricter than the broader `prepare_transfer` network allowlist in that engine.
 
-Phase 1 network authority is the application RPC endpoint together with transaction construction. Before any live transaction is constructed, `getGenesisHash()` must equal `EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG`. A mismatch fail-closes. Phase 0 exposes `checkDevnetGenesisHash()` as a pure stub. It records that expected hash, leaves `observedGenesisHash` null, and does not call an RPC.
+Phase 1 network authority is the application RPC endpoint together with transaction construction. The endpoint is the literal `https://api.devnet.solana.com`. The wallet does not supply it. Before any live transaction is constructed, `getGenesisHash()` must equal `EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG`. A mismatch, a missing hash, a fetch error, or a timeout fail-closes, and no transaction is built. The same call is made again immediately before `signTransaction`. A cached success from prepare time is not reused. That second call is the genesis freshness check. It uses the same fail-closed rules and the same 8 second timeout. Phase 0 still exposes `checkDevnetGenesisHash()` as a pure stub. It records that expected hash, leaves `observedGenesisHash` null, and does not call an RPC.
 
 ## Binding model
 
@@ -69,7 +69,7 @@ Phase 1 must extend the approval before a sign path can exist:
 
 That exact-message binding covers, by construction, the blockhash, the fee payer, program IDs, account metas, flags, instruction ordering, extra instructions, the amount, the destination, and every other serialized field.
 
-Phase 0 does not construct those message bytes and does not call Phantom to sign.
+Phase 0 does not construct those message bytes and does not call Phantom to sign. Phase 1 does construct them, and it still cannot add a sign path on the six-field digest alone. The implementation is below.
 
 Locked vector for 0.001 SOL to `4WDYrTNTit9m7kU5y2LWCfvf35pQo9vbjPTDyiDHEq9e` on devnet:
 
@@ -137,7 +137,51 @@ TheSingulant/ai4-constrain:
 - `docs/transaction-control.md`
 - `docs/transaction-devnet-e2e.md`
 
-This repository reimplements the six-field audit digest in TypeScript for a static preview. It does not import the package and it does not call it. The desktop handoff is a read-only reference for the DevNet genesis check. This preview does not perform that check and does not call a wallet to sign.
+This repository reimplements the six-field audit digest in TypeScript for a static preview. It does not import the package and it does not call it. The desktop handoff is a read-only reference for the DevNet genesis check. Phase 0 does not perform that check. Phase 1 performs it against the app DevNet RPC and calls Phantom `signTransaction` only for the prepared message. It does not broadcast.
+
+## Phase 1 signing path
+
+```
+ALLOW snapshot (unchanged six-field audit digest)
+  -> connected Phantom identity
+  -> app DevNet getGenesisHash()
+  -> app DevNet getLatestBlockhash()
+  -> one legacy SystemProgram.transfer
+  -> SHA-256 of serializeMessage()
+  -> signing readiness ready
+  -> explicit Sign transaction click
+  -> fresh getGenesisHash()
+  -> blockhash still valid, not replaced
+  -> reserialize, recompute SHA-256, require equality
+  -> Phantom signTransaction on that same Transaction
+  -> local signed bytes in memory
+```
+
+No step calls `sendTransaction`, `sendRawTransaction`, or `signAndSendTransaction`.
+
+### Transaction format
+
+Phase 1 uses the classic `Transaction` from `@solana/web3.js`, not `VersionedTransaction`. A native SOL transfer is one system instruction. It does not need address lookup tables. `serializeMessage()` is the exact message. Phantom `signTransaction` receives that same object. A second transaction built from the same fields is not substituted.
+
+The transfer cap stays 0.01 SOL, the Phase 0 cap. The fee payer is the connected Phantom public key. The instruction list is only `SystemProgram.transfer`. The hashed bytes include the fee payer, recent blockhash, program id, account metas, header flags, instruction ordering, recipient, and lamports.
+
+### Prepared state
+
+The prepared record is frozen. It stores the fee payer, the six-field `ApprovedBinding` and its audit hash, the exact message bytes, the message hash, the blockhash, the last valid block height, the DevNet genesis hash, and a timestamp. Message bytes are copied on read. The `Transaction` instance is held beside that record and is the object passed to Phantom.
+
+### Blockhash expiry
+
+A new blockhash produces a new message hash. When the stored blockhash is no longer valid, when the current block height is past `lastValidBlockHeight`, or when that check errors or times out, signing readiness becomes unavailable and the session drops the prepared record. The old record is not edited. Its blockhash is not replaced. A later prepare builds a new record. `signIfGated` refuses any candidate that is not the session's current prepared record, so the old record cannot be signed.
+
+The sign path does not call `getLatestBlockhash`. Rebuild is a new prepare.
+
+### Readiness
+
+Constraint result and signing readiness stay separate. Phase 1 states are `unavailable`, `preparing`, `ready`, `signing`, `signed`, and `failed`. ALLOW is not ready. Ready requires a connected Phantom identity, a passed genesis check, constraint ALLOW, a valid six-field binding, a built exact message, a stored message hash, and a form that still matches. A wallet, fixture, network, or form change drops the session to unavailable and clears the prepared state. A failed Phantom prompt stays `failed` until a new prepare. It is not signed again.
+
+### After sign
+
+The signature and the signed transaction bytes stay on the in-memory session. `broadcast` is false. Nothing is written to local storage. Verify stays on the Preview stub.
 
 ## New components
 
@@ -147,9 +191,11 @@ This repository reimplements the six-field audit digest in TypeScript for a stat
 - Signing readiness, separate from the constraint result
 - Phantom detect and connect identity stub
 - Frozen post-ALLOW recheck, including the current wallet session
-- DevNet genesis-hash stub with no RPC
+- DevNet genesis-hash stub with no RPC, kept for the Phase 0 evaluator
+- Live DevNet genesis check before build and again before sign
+- Legacy SOL transfer, exact-message SHA-256, and one Phantom `signTransaction` call
 - Verify preview stub
 
 ## Out of scope
 
-Live sign and send, staking, swaps, WalletConnect, MetaMask, account abstraction, custody, server signing, production hosting, mainnet, production Verify, UNS writes, and changes to ai4-constrain.
+Broadcast, staking, swaps, WalletConnect, MetaMask, account abstraction, custody, server signing, production hosting, mainnet, production Verify, UNS writes, and changes to ai4-constrain.
