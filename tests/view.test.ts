@@ -55,7 +55,16 @@ describe("preview UI", () => {
     expect(root.querySelector("[data-testid='verify-status']")?.textContent).toContain(
       evaluation.verify.detail,
     );
-    expect(root.querySelector("[data-testid='network-display']")?.textContent).toContain("DevNet");
+    expect(root.querySelector("[data-testid='network-display']")?.textContent).toBe(
+      "Network: Solana DevNet.",
+    );
+    expect(root.querySelector("[data-testid='posture-strip']")?.textContent).toContain("DEVNET ONLY");
+    expect(root.querySelector("[data-testid='posture-strip']")?.textContent).toContain(
+      "LOCAL SIGNATURE ONLY",
+    );
+    expect(root.querySelector("[data-testid='posture-strip']")?.textContent).toContain("NOT BROADCAST");
+    expect(text).toContain("You sign. AI⁴ cannot move funds.");
+    expect(text).not.toContain("Attempt mainnet");
     expect(root.querySelector("[data-testid='decision']")?.textContent).toBe(
       "Constraint result: ALLOW",
     );
@@ -110,7 +119,12 @@ describe("preview UI", () => {
     expect(root.querySelector("[data-testid='wallet-display']")?.textContent).toBe(
       "Wallet: connected FixturePublicKey.",
     );
-    expect(root.querySelector("[data-testid='network-display']")?.textContent).toContain("DevNet");
+    expect(root.querySelector("[data-testid='network-display']")?.textContent).toBe(
+      "Network: Solana DevNet.",
+    );
+    expect([...root.querySelectorAll("button")].map((button) => button.textContent)).not.toContain(
+      "Attempt mainnet",
+    );
   });
 
   it("shows transaction-control DENY for a mainnet intent", async () => {
@@ -144,6 +158,12 @@ describe("preview UI", () => {
     );
     expect(root.querySelector("[data-testid='network-display']")?.textContent).toContain(
       "mainnet-beta",
+    );
+    expect(root.querySelector("[data-testid='network-display']")?.textContent).toBe(
+      "Network: mainnet-beta. Phase 0 requires DevNet.",
+    );
+    expect([...root.querySelectorAll("button")].map((button) => button.textContent)).not.toContain(
+      "Attempt mainnet",
     );
   });
 });

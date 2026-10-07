@@ -17,6 +17,7 @@ body {
   max-width: 44rem;
   margin: 0 auto;
   padding: 1.5rem 1.25rem 3rem;
+  overflow-wrap: anywhere;
 }
 
 h1,
@@ -45,10 +46,35 @@ section {
   padding-top: 0.25rem;
 }
 
+[data-testid="posture-strip"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin-top: 0;
+  border: 2px solid #1c1915;
+  background: #1c1915;
+  color: #f4f1ea;
+  padding: 0.85rem 1rem;
+}
+
+[data-testid="posture-strip"] p {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 [data-testid="network-banner"] {
   border: 2px solid #1c1915;
   background: #fffdf8;
   padding: 0.85rem 1rem;
+}
+
+.technical-detail {
+  color: #5c564e;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 
 [data-testid="network-display"] {

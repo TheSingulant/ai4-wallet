@@ -6,6 +6,7 @@ import { emptySigningSession, signingControlsLocked } from "../src/domain/signin
 import { evaluatePreview } from "../src/domain/evaluate";
 import { DISCONNECTED_WALLET } from "../src/domain/types";
 import { CONSTRAINT_FIXTURES, DEVNET_TRANSFER } from "../src/fixtures/preview";
+import { auditDigestLine, messageHashLine, phase1ReadinessLine } from "../src/ui/phase1View";
 import { renderApp, type RenderHandlers } from "../src/ui/render";
 import { PHANTOM_WALLET, preparedAllow } from "./phase1/helpers";
 
@@ -54,6 +55,25 @@ describe("Phase 1 preview UI", () => {
       },
     );
     const text = root.textContent ?? "";
+    expect(root.querySelector("[data-testid='posture-devnet-only']")?.textContent).toBe("DEVNET ONLY");
+    expect(root.querySelector("[data-testid='posture-local-signature-only']")?.textContent).toBe(
+      "LOCAL SIGNATURE ONLY",
+    );
+    expect(root.querySelector("[data-testid='posture-not-broadcast']")?.textContent).toBe(
+      "NOT BROADCAST",
+    );
+    expect(root.querySelector("[data-testid='custody']")?.textContent).toBe(
+      "You sign. AI⁴ cannot move funds.",
+    );
+    expect(root.querySelector("[data-testid='network-display']")?.textContent).toBe(
+      "Network: Solana DevNet.",
+    );
+    expect(root.querySelector("[data-testid='message-hash']")?.textContent).toBe(
+      "Exact message binding: none.",
+    );
+    expect(root.querySelector("[data-testid='audit-digest']")?.textContent).toBe("Intent binding: none.");
+    expect(buttonLabels(root)).not.toContain("Attempt mainnet");
+    expect(text).not.toContain("Attempt mainnet");
     expect(root.querySelector("[data-testid='verify-status']")?.textContent).toBe(PRODUCT.verify);
     expect(root.querySelector("[data-testid='decision']")?.textContent).toBe("Constraint result: ALLOW");
     expect(root.querySelector("[data-testid='genesis-status']")?.textContent).toBe(
@@ -113,7 +133,13 @@ describe("Phase 1 preview UI", () => {
       "Genesis verified.",
     );
     expect(root.querySelector("[data-testid='phase1-readiness']")?.textContent).toBe(
-      "Phase 1 signing readiness: Ready.",
+      "Signing status: Ready.",
+    );
+    expect(root.querySelector("[data-testid='message-hash']")?.textContent).toMatch(
+      /^Exact message binding: [0-9a-f]{64}$/,
+    );
+    expect(root.querySelector("[data-testid='audit-digest']")?.textContent).toMatch(
+      /^Intent binding: [0-9a-f]{64}\. /,
     );
     expect(root.querySelector("[data-testid='decision']")?.textContent).toBe("Constraint result: ALLOW");
     expect(root.querySelector("[data-testid='signing-readiness']")).toBeNull();
@@ -132,6 +158,22 @@ describe("Phase 1 preview UI", () => {
     expect(text).not.toContain("\u2014");
     expect(root.querySelector("[data-testid='verify-status']")?.textContent).toContain("Preview");
     expect(text).not.toContain("does not request signatures");
+    expect(text).not.toContain("Attempt mainnet");
+    expect(text).toContain(PRODUCT.custody);
+  });
+
+  it("labels every Phase 1 readiness state as signing status", () => {
+    expect(phase1ReadinessLine("unavailable")).toBe("Signing status: Unavailable.");
+    expect(phase1ReadinessLine("preparing")).toBe("Signing status: Preparing.");
+    expect(phase1ReadinessLine("ready")).toBe("Signing status: Ready.");
+    expect(phase1ReadinessLine("signing")).toBe("Signing status: Signing.");
+    expect(phase1ReadinessLine("signed")).toBe(
+      "Signing status: Signed locally. Not broadcast.",
+    );
+    expect(phase1ReadinessLine("failed")).toBe("Signing status: Failed.");
+    const empty = emptySigningSession();
+    expect(messageHashLine(empty)).toBe("Exact message binding: none.");
+    expect(auditDigestLine(empty)).toBe("Intent binding: none.");
   });
 
   it("disables Sign and Prepare while a sign attempt is in flight", async () => {
@@ -217,3 +259,7 @@ describe("Phase 1 preview UI", () => {
     expect(edits).toBe(1);
   });
 });
+
+function buttonLabels(root: HTMLElement): string[] {
+  return [...root.querySelectorAll("button")].map((button) => button.textContent ?? "");
+}
