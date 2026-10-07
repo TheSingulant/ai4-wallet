@@ -16,6 +16,7 @@ import {
   PHANTOM_WALLET,
   preparedAllow,
   pubkey,
+  stableGuards,
   walletWith,
 } from "./phase1/helpers";
 
@@ -35,6 +36,7 @@ describe("Phantom signTransaction gates", () => {
       },
     };
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -61,6 +63,7 @@ describe("Phantom signTransaction gates", () => {
     expect(PHASE1_BOUNDARIES.phantomSignMethod).toBe("signTransaction");
 
     const again = await signIfGated({
+      ...stableGuards(outcome.session, form),
       session: outcome.session,
       wallet: PHANTOM_WALLET,
       form,
@@ -87,6 +90,7 @@ describe("Phantom signTransaction gates", () => {
     expect(lookalike).not.toBe(exactTransaction(prepared));
     let seen: Transaction | null = null;
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -108,6 +112,7 @@ describe("Phantom signTransaction gates", () => {
     const { session, form } = await preparedAllow();
     const calls: string[] = [];
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session: { ...session, readiness: "unavailable" },
       wallet: PHANTOM_WALLET,
       form,
@@ -134,6 +139,7 @@ describe("Phantom signTransaction gates", () => {
       throw new Error("should not sign");
     };
     const disconnected = await signIfGated({
+      ...stableGuards(session, form, DISCONNECTED_WALLET),
       session,
       wallet: DISCONNECTED_WALLET,
       form,
@@ -145,9 +151,11 @@ describe("Phantom signTransaction gates", () => {
     expect(disconnected.session.readiness).toBe("unavailable");
     expect(disconnected.session.prepared).toBeNull();
 
+    const otherWallet = walletWith(pubkey(6));
     const other = await signIfGated({
+      ...stableGuards(session, form, otherWallet),
       session,
-      wallet: walletWith(pubkey(6)),
+      wallet: otherWallet,
       form,
       genesisRpc: genesisRpc().rpc,
       blockhashProbe: freshProbe(),
@@ -163,6 +171,7 @@ describe("Phantom signTransaction gates", () => {
     expect(session.genesis?.ok).toBe(true);
     let calls = 0;
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -196,6 +205,7 @@ describe("Phantom signTransaction gates", () => {
     exactTransaction(prepared)!.recentBlockhash = BLOCKHASH_B;
     let signed = false;
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -217,6 +227,7 @@ describe("Phantom signTransaction gates", () => {
   it("records a local failure when Phantom rejects the request", async () => {
     const { session, form } = await preparedAllow();
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -232,6 +243,7 @@ describe("Phantom signTransaction gates", () => {
     expect(outcome.session.prepared).toBe(session.prepared);
 
     const retry = await signIfGated({
+      ...stableGuards(outcome.session, form),
       session: outcome.session,
       wallet: PHANTOM_WALLET,
       form,
@@ -247,10 +259,12 @@ describe("Phantom signTransaction gates", () => {
 
   it("does not sign when the form no longer matches the prepared binding", async () => {
     const { session, form } = await preparedAllow();
+    const changed = { ...form, amount: "0.002" };
     const outcome = await signIfGated({
+      ...stableGuards(session, changed),
       session,
       wallet: PHANTOM_WALLET,
-      form: { ...form, amount: "0.002" },
+      form: changed,
       genesisRpc: genesisRpc().rpc,
       blockhashProbe: freshProbe(),
       sign: async () => {

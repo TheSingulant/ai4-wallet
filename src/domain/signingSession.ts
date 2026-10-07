@@ -99,22 +99,58 @@ export interface SignInput {
    * Shared generation. After every await, and again inside the synchronous
    * critical section, a change aborts the attempt before Phantom is called.
    */
-  generation?: SigningGeneration;
+  generation: SigningGeneration;
   /** Generation this attempt captured when it started. */
-  attemptGeneration?: number;
-  liveSession?: () => SigningSession;
-  liveForm?: () => TransferForm;
-  liveWallet?: () => WalletSnapshot;
+  attemptGeneration: number;
+  liveSession: () => SigningSession;
+  liveForm: () => TransferForm;
+  liveWallet: () => WalletSnapshot;
   /** False when the current constraint result is no longer ALLOW. */
-  constraintStillAllow?: () => boolean;
+  constraintStillAllow: () => boolean;
   /**
    * Fresh Phantom provider public key. Read synchronously after the awaits,
    * inside the critical section. Not the cached wallet snapshot.
    */
-  readProviderPublicKey?: () => string | null;
+  readProviderPublicKey: () => string | null;
   timeoutMs?: number;
   sign: (transaction: Transaction) => Promise<Transaction>;
   onReadiness?: (readiness: Phase1SigningReadiness) => void;
+}
+
+/**
+ * Every live guard must be present. A missing reader is not filled from the
+ * captured snapshot. Phantom is not called.
+ */
+export function liveSignGuardsPresent(input: {
+  generation?: unknown;
+  attemptGeneration?: unknown;
+  liveSession?: unknown;
+  liveForm?: unknown;
+  liveWallet?: unknown;
+  constraintStillAllow?: unknown;
+  readProviderPublicKey?: unknown;
+}): boolean {
+  if (!isSigningGeneration(input.generation)) {
+    return false;
+  }
+  if (typeof input.attemptGeneration !== "number" || !Number.isFinite(input.attemptGeneration)) {
+    return false;
+  }
+  return (
+    typeof input.liveSession === "function" &&
+    typeof input.liveForm === "function" &&
+    typeof input.liveWallet === "function" &&
+    typeof input.constraintStillAllow === "function" &&
+    typeof input.readProviderPublicKey === "function"
+  );
+}
+
+function isSigningGeneration(value: unknown): value is SigningGeneration {
+  if (typeof value !== "object" || value === null || !("current" in value)) {
+    return false;
+  }
+  const current = (value as { current?: unknown }).current;
+  return typeof current === "number" && Number.isFinite(current);
 }
 
 export interface SignOutcome {
@@ -373,14 +409,17 @@ export async function runPrepare(input: PrepareInput): Promise<SigningSession> {
  * calls sign on that same Transaction with no await and no callback between them.
  */
 export async function signIfGated(input: SignInput): Promise<SignOutcome> {
+  if (!liveSignGuardsPresent(input)) {
+    return { session: input.session, phantomCalled: false };
+  }
   const timeoutMs = input.timeoutMs ?? RPC_TIMEOUT_MS;
-  const source = input.generation ?? { current: input.session.generation };
-  const attempt = input.attemptGeneration ?? source.current;
-  const liveSession = input.liveSession ?? (() => input.session);
-  const liveForm = input.liveForm ?? (() => input.form);
-  const liveWallet = input.liveWallet ?? (() => input.wallet);
-  const constraintStillAllow = input.constraintStillAllow ?? (() => true);
-  const readProviderPublicKey = input.readProviderPublicKey ?? (() => input.wallet.publicKey ?? null);
+  const source = input.generation;
+  const attempt = input.attemptGeneration;
+  const liveSession = input.liveSession;
+  const liveForm = input.liveForm;
+  const liveWallet = input.liveWallet;
+  const constraintStillAllow = input.constraintStillAllow;
+  const readProviderPublicKey = input.readProviderPublicKey;
 
   const current = input.session.prepared;
   if (input.candidate !== undefined && input.candidate !== current) {

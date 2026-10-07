@@ -28,6 +28,7 @@ import {
   PHANTOM_WALLET,
   preparedAllow,
   pubkey,
+  stableGuards,
   TEST_PAYER,
 } from "./phase1/helpers";
 
@@ -70,6 +71,7 @@ describe("pre-sign integrity", () => {
     const prepared = session.prepared!;
     let phantom = false;
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -97,6 +99,7 @@ describe("pre-sign integrity", () => {
     const prepared = session.prepared!;
     let phantom = false;
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -121,6 +124,7 @@ describe("pre-sign integrity", () => {
     const generation = { current: 4 };
     let phantom = false;
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -150,6 +154,7 @@ describe("pre-sign integrity", () => {
     let providerKey: string | null = FEE_PAYER;
     let phantom = false;
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -175,6 +180,7 @@ describe("pre-sign integrity", () => {
   it("rejects a returned signature that does not verify", async () => {
     const { session, form } = await preparedAllow();
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,

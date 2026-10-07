@@ -12,6 +12,7 @@ import {
   genesisRpc,
   PHANTOM_WALLET,
   preparedAllow,
+  stableGuards,
 } from "./phase1/helpers";
 
 describe("blockhash expiry", () => {
@@ -58,6 +59,7 @@ describe("blockhash expiry", () => {
     const prepared = session.prepared!;
     const transaction = exactTransaction(prepared)!;
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -82,6 +84,7 @@ describe("blockhash expiry", () => {
   it("fail closed when the blockhash check times out or throws", async () => {
     const { session, form } = await preparedAllow();
     const timedOut = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -101,6 +104,7 @@ describe("blockhash expiry", () => {
     expect(session.prepared?.blockhash).toBe(BLOCKHASH_A);
 
     const failed = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -124,6 +128,7 @@ describe("blockhash expiry", () => {
     const { session, form, evaluation } = await preparedAllow();
     const oldPrepared = session.prepared!;
     const expired = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,
@@ -156,6 +161,7 @@ describe("blockhash expiry", () => {
     expect(oldPrepared.blockhash).toBe(BLOCKHASH_A);
 
     const refused = await signIfGated({
+      ...stableGuards(rebuilt, form),
       session: rebuilt,
       candidate: oldPrepared,
       wallet: PHANTOM_WALLET,
@@ -171,6 +177,7 @@ describe("blockhash expiry", () => {
     expect(refused.session.prepared?.blockhash).toBe(BLOCKHASH_B);
 
     const signed = await signIfGated({
+      ...stableGuards(rebuilt, form),
       session: rebuilt,
       wallet: PHANTOM_WALLET,
       form,
@@ -187,6 +194,7 @@ describe("blockhash expiry", () => {
   it("treats the last valid block height as inclusive", async () => {
     const { session, form } = await preparedAllow();
     const outcome = await signIfGated({
+      ...stableGuards(session, form),
       session,
       wallet: PHANTOM_WALLET,
       form,

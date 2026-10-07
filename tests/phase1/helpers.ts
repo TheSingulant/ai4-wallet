@@ -4,6 +4,7 @@ import { DEVNET_GENESIS_HASH } from "../../src/domain/networkAuthority";
 import {
   runPrepare,
   type PrepareInput,
+  type SigningGeneration,
   type SigningSession,
   type TransferForm,
 } from "../../src/domain/signingSession";
@@ -80,6 +81,35 @@ export function blockhashRpc(blockhash = BLOCKHASH_A, lastValidBlockHeight = 100
         return { blockhash, lastValidBlockHeight };
       },
     },
+  };
+}
+
+/**
+ * Live guards a direct signIfGated caller must pass.
+ * Production code does not use this helper. Overrides in a test win when spread first.
+ */
+export function stableGuards(
+  session: SigningSession,
+  form: TransferForm,
+  wallet: WalletSnapshot = PHANTOM_WALLET,
+): {
+  generation: SigningGeneration;
+  attemptGeneration: number;
+  liveSession: () => SigningSession;
+  liveForm: () => TransferForm;
+  liveWallet: () => WalletSnapshot;
+  constraintStillAllow: () => boolean;
+  readProviderPublicKey: () => string | null;
+} {
+  const generation: SigningGeneration = { current: session.generation };
+  return {
+    generation,
+    attemptGeneration: generation.current,
+    liveSession: () => session,
+    liveForm: () => form,
+    liveWallet: () => wallet,
+    constraintStillAllow: () => true,
+    readProviderPublicKey: () => (wallet.status === "connected" ? wallet.publicKey : null),
   };
 }
 

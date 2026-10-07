@@ -12,6 +12,7 @@ import {
   type PreviewEvaluation,
   type RecheckInput,
 } from "./domain/evaluate";
+import { createPhantomIdentityBinding } from "./app/phantomIdentity";
 import { createPhase1Session } from "./app/phase1Session";
 import type { TransferForm } from "./domain/signingSession";
 import { CONSTRAINT_FIXTURES, DEVNET_TRANSFER, FIXTURE_DESTINATION } from "./fixtures/preview";
@@ -27,7 +28,6 @@ import {
   phantomAdapter,
   readPhantomPublicKey,
   signTransaction,
-  subscribePhantomSession,
 } from "./wallet/phantom";
 
 const root = document.querySelector<HTMLElement>("#app");
@@ -50,7 +50,6 @@ let form: TransferForm = {
 };
 let currentEvaluation: PreviewEvaluation | null = null;
 let refreshSerial = 0;
-let unsubscribePhantom: () => void = () => undefined;
 
 const runtime = createPhase1Session({
   getWallet: () => wallet,
@@ -69,35 +68,20 @@ const runtime = createPhase1Session({
   timeoutMs: RPC_TIMEOUT_MS,
 });
 
-function bindPhantomEvents(): void {
-  unsubscribePhantom();
-  unsubscribePhantom = subscribePhantomSession(scope, {
-    onAccountChanged: (publicKey) => {
-      applyWalletIdentity(publicKey, "Phantom account changed. Signing readiness is unavailable.");
-    },
-    onDisconnect: () => {
-      applyWalletIdentity(null, "Wallet disconnected. Signing readiness is unavailable.");
-    },
-  });
-}
-
-function applyWalletIdentity(publicKey: string | null, note: string): void {
-  const next: WalletSnapshot =
-    publicKey === null
-      ? DISCONNECTED_WALLET
-      : Object.freeze({
-          status: "connected",
-          publicKey,
-          source: "phantom",
-        });
-  if (next.status === wallet.status && next.publicKey === wallet.publicKey && next.source === wallet.source) {
-    return;
-  }
-  wallet = next;
-  connectNote = note;
-  runtime.drop("wallet session changed; signing readiness is unavailable");
-  void refresh(false);
-}
+const phantomIdentity = createPhantomIdentityBinding({
+  scope,
+  getWallet: () => wallet,
+  setWallet: (next) => {
+    wallet = next;
+  },
+  setConnectNote: (note) => {
+    connectNote = note;
+  },
+  drop: (note) => runtime.drop(note),
+  afterChange: () => {
+    void refresh(false);
+  },
+});
 
 async function draw(evaluation: PreviewEvaluation): Promise<void> {
   currentEvaluation = evaluation;
@@ -218,7 +202,7 @@ async function connect(): Promise<void> {
   if (changed) {
     runtime.drop("wallet session changed; signing readiness is unavailable");
   }
-  bindPhantomEvents();
+  phantomIdentity.bind();
   await refresh(false);
 }
 
@@ -284,5 +268,5 @@ function stringField(data: FormData, name: string): string {
   return typeof value === "string" ? value : "";
 }
 
-bindPhantomEvents();
+phantomIdentity.bind();
 void refresh(true);
