@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { PRODUCT } from "../src/copy";
 import { APP_DEVNET_RPC_URL } from "../src/domain/genesisLive";
-import { emptySigningSession } from "../src/domain/signingSession";
+import { emptySigningSession, signingControlsLocked } from "../src/domain/signingSession";
 import { evaluatePreview } from "../src/domain/evaluate";
 import { DISCONNECTED_WALLET } from "../src/domain/types";
 import { CONSTRAINT_FIXTURES, DEVNET_TRANSFER } from "../src/fixtures/preview";
@@ -132,6 +132,52 @@ describe("Phase 1 preview UI", () => {
     expect(text).not.toContain("\u2014");
     expect(root.querySelector("[data-testid='verify-status']")?.textContent).toContain("Preview");
     expect(text).not.toContain("does not request signatures");
+  });
+
+  it("disables Sign and Prepare while a sign attempt is in flight", async () => {
+    const { evaluation, session } = await preparedAllow();
+    const signing = {
+      ...session,
+      readiness: "signing" as const,
+      inFlight: true,
+    };
+    expect(signingControlsLocked(signing)).toBe(true);
+    const root = document.createElement("div");
+    let prepares = 0;
+    let signs = 0;
+    renderApp(
+      root,
+      {
+        evaluation,
+        wallet: PHANTOM_WALLET,
+        detection: { adapterId: "phantom", present: true },
+        connectNote: "Phantom returned a public key. No signature was requested.",
+        form: {
+          amount: "0.001",
+          destination: DEVNET_TRANSFER.destination,
+          network: "devnet",
+          serializedTx: evaluation.serializedTx ?? "",
+        },
+        phase1: { session: signing, rpcUrl: APP_DEVNET_RPC_URL },
+      },
+      {
+        ...handlers,
+        onPrepare: () => {
+          prepares += 1;
+        },
+        onSign: () => {
+          signs += 1;
+        },
+      },
+    );
+    const prepare = root.querySelector<HTMLButtonElement>("[data-testid='prepare-transfer']");
+    const sign = root.querySelector<HTMLButtonElement>("[data-testid='sign-transaction']");
+    expect(prepare?.disabled).toBe(true);
+    expect(sign?.disabled).toBe(true);
+    prepare?.click();
+    sign?.click();
+    expect(prepares).toBe(0);
+    expect(signs).toBe(0);
   });
 
   it("reports form edits to the caller", async () => {

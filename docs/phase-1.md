@@ -8,8 +8,8 @@ The transaction is a classic `Transaction`. `VersionedTransaction` is not used. 
 
 The six-field `ApprovedBinding` SHA-256 stays the audit digest, including the known vector for 0.001 SOL. It does not authorize a signature. The sign path requires a second SHA-256 over the legacy message bytes.
 
-Pre-sign recheck reserializes that same transaction, recomputes the hash, and requires equality. A mismatch clears readiness and the prepared state. Phantom is not called. The object passed to `signTransaction` is the prepared instance, not a reconstructed lookalike.
+The pre-sign critical section is synchronous. It serializes the candidate, compares those bytes to the frozen message, and calls `signTransaction` on that same object. There is no await and no readiness callback between the comparison and the call. The candidate is restored from the frozen message bytes, and only if that restoration matches. A mutated sealed transaction fails closed. A field lookalike is not what Phantom receives.
 
-Blockhash expiry does not edit the old prepared record. Readiness drops to unavailable. A new prepare builds a new record. The old record cannot be signed.
+Blockhash expiry does not edit the old prepared record. Readiness drops to unavailable. A new prepare builds a new record and advances the signing generation. An attempt captures the generation and the prepared record it intends to sign. If either no longer matches, the attempt aborts before Phantom.
 
 Verify stays on the Preview stub. There is no production verifier call and no UNS write.

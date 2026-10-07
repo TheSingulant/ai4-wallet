@@ -1,6 +1,7 @@
 import { PublicKey, type Transaction } from "@solana/web3.js";
 import { describe, expect, it } from "vitest";
 import { PHASE1_BOUNDARIES } from "../src/domain/boundaries";
+import { bytesEqual } from "../src/domain/canonical";
 import { buildLegacySolTransfer, exactTransaction } from "../src/domain/nativeTransfer";
 import { signIfGated } from "../src/domain/signingSession";
 import { DEVNET_GENESIS_HASH } from "../src/domain/networkAuthority";
@@ -47,7 +48,9 @@ describe("Phantom signTransaction gates", () => {
     });
     expect(calls).toEqual(["genesis", "sign"]);
     expect(outcome.phantomCalled).toBe(true);
-    expect(seen).toBe(expected);
+    expect(seen).not.toBeNull();
+    expect(bytesEqual(seen!.serializeMessage(), prepared.messageBytes)).toBe(true);
+    expect(seen).not.toBe(expected);
     expect(outcome.session.readiness).toBe("signed");
     expect(outcome.session.signed?.broadcast).toBe(false);
     expect(outcome.session.signed?.signature.byteLength).toBe(64);
@@ -95,7 +98,9 @@ describe("Phantom signTransaction gates", () => {
       },
     });
     expect(outcome.phantomCalled).toBe(true);
-    expect(seen).toBe(exactTransaction(prepared));
+    expect(seen).not.toBeNull();
+    expect(bytesEqual(seen!.serializeMessage(), prepared.messageBytes)).toBe(true);
+    expect(seen).not.toBe(exactTransaction(prepared));
     expect(seen).not.toBe(lookalike);
   });
 

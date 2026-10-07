@@ -62,10 +62,10 @@ Phase 1 must extend the approval before a sign path can exist:
 1. Construct the exact Solana message bytes.
 2. SHA-256 those bytes.
 3. Store that hash with the audit binding.
-4. Immediately before Phantom `signTransaction`, serialize the message again.
-5. Recompute the SHA-256.
-6. Require equality with the stored hash.
-7. Any byte difference drops signing readiness.
+4. Immediately before Phantom `signTransaction`, serialize the candidate message synchronously.
+5. Compare those bytes to the frozen message. That equality is the stored SHA-256 preimage.
+6. Call `signTransaction` on that same candidate with no await and no callback between the comparison and the call.
+7. Any byte difference drops signing readiness and does not call Phantom.
 
 That exact-message binding covers, by construction, the blockhash, the fee payer, program IDs, account metas, flags, instruction ordering, extra instructions, the amount, the destination, and every other serialized field.
 
@@ -150,10 +150,17 @@ ALLOW snapshot (unchanged six-field audit digest)
   -> SHA-256 of serializeMessage()
   -> signing readiness ready
   -> explicit Sign transaction click
+  -> Sign and Prepare disabled for that attempt
   -> fresh getGenesisHash()
   -> blockhash still valid, not replaced
-  -> reserialize, recompute SHA-256, require equality
-  -> Phantom signTransaction on that same Transaction
+  -> fresh Phantom public key equals the prepared fee payer
+  -> synchronous critical section:
+       serializeMessage()
+       byte-for-byte equality with the frozen message
+       those bytes are the stored SHA-256 preimage
+       Phantom signTransaction on that same Transaction
+       no await and no readiness callback between the compare and the call
+  -> verify the returned fee-payer signature over that message
   -> local signed bytes in memory
 ```
 
@@ -161,17 +168,17 @@ No step calls `sendTransaction`, `sendRawTransaction`, or `signAndSendTransactio
 
 ### Transaction format
 
-Phase 1 uses the classic `Transaction` from `@solana/web3.js`, not `VersionedTransaction`. A native SOL transfer is one system instruction. It does not need address lookup tables. `serializeMessage()` is the exact message. Phantom `signTransaction` receives that same object. A second transaction built from the same fields is not substituted.
+Phase 1 uses the classic `Transaction` from `@solana/web3.js`, not `VersionedTransaction`. A native SOL transfer is one system instruction. It does not need address lookup tables. `serializeMessage()` is the exact message. Immediately before `signTransaction`, that message is compared to the frozen bytes and the matching Transaction is the one passed to Phantom. A field lookalike is not substituted. The critical section does not await and does not run a readiness callback between the comparison and the call.
 
 The transfer cap stays 0.01 SOL, the Phase 0 cap. The fee payer is the connected Phantom public key. The instruction list is only `SystemProgram.transfer`. The hashed bytes include the fee payer, recent blockhash, program id, account metas, header flags, instruction ordering, recipient, and lamports.
 
 ### Prepared state
 
-The prepared record is frozen. It stores the fee payer, the six-field `ApprovedBinding` and its audit hash, the exact message bytes, the message hash, the blockhash, the last valid block height, the DevNet genesis hash, and a timestamp. Message bytes are copied on read. The `Transaction` instance is held beside that record and is the object passed to Phantom.
+The prepared record is frozen. It stores the fee payer, the six-field `ApprovedBinding` and its audit hash, the exact message bytes, the message hash, the blockhash, the last valid block height, the DevNet genesis hash, and a timestamp. Message bytes are copied on read. The sealed `Transaction` stays beside that record so a later mutation can be detected. Phantom receives a restoration of the frozen message bytes, created inside the critical section, and only when that restoration and the sealed transaction both serialize to those bytes.
 
 ### Blockhash expiry
 
-A new blockhash produces a new message hash. When the stored blockhash is no longer valid, when the current block height is past `lastValidBlockHeight`, or when that check errors or times out, signing readiness becomes unavailable and the session drops the prepared record. The old record is not edited. Its blockhash is not replaced. A later prepare builds a new record. `signIfGated` refuses any candidate that is not the session's current prepared record, so the old record cannot be signed.
+A new blockhash produces a new message hash. When the stored blockhash is no longer valid, when the current block height is past `lastValidBlockHeight`, or when that check errors or times out, signing readiness becomes unavailable and the session drops the prepared record. The old record is not edited. Its blockhash is not replaced. A later prepare builds a new record and advances a monotonic signing generation. A sign attempt captures that generation and the prepared record it intends to sign. After every await, and again in the synchronous section immediately before `signTransaction`, the attempt aborts when the generation changed, the session no longer holds that same record, the form no longer matches, or the constraint result is no longer ALLOW. Phantom is not called. An in-flight attempt does not sign a record the page has replaced or dropped.
 
 The sign path does not call `getLatestBlockhash`. Rebuild is a new prepare.
 

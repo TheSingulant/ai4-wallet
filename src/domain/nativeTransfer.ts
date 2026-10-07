@@ -1,4 +1,4 @@
-import { PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import { Message, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { decodeBase58 } from "./address";
 import { bytesEqual, copyBytes, sha256Bytes } from "./canonical";
 import { DEVNET_GENESIS_HASH } from "./networkAuthority";
@@ -39,6 +39,18 @@ export interface PreparedTransfer {
 
 const transactions = new WeakMap<PreparedTransfer, Transaction>();
 
+/** A recent blockhash is 32 bytes once base58-decoded. Empty and other lengths fail closed. */
+export function isExactBlockhash(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    return false;
+  }
+  try {
+    return decodeBase58(value).byteLength === 32;
+  } catch {
+    return false;
+  }
+}
+
 export function buildLegacySolTransfer(args: {
   feePayer: PublicKey;
   destination: PublicKey;
@@ -46,6 +58,9 @@ export function buildLegacySolTransfer(args: {
   blockhash: string;
   lastValidBlockHeight: number;
 }): Transaction {
+  if (!isExactBlockhash(args.blockhash)) {
+    throw new Error("blockhash is not 32-byte base58");
+  }
   const transaction = new Transaction({
     feePayer: args.feePayer,
     recentBlockhash: args.blockhash,
@@ -110,16 +125,36 @@ export function readSystemTransferMessage(
   if (transaction.recentBlockhash !== message.recentBlockhash) {
     return { ok: false, reason: "blockhash does not match the compiled message" };
   }
+  if (!isExactBlockhash(message.recentBlockhash)) {
+    return { ok: false, reason: "blockhash is not 32-byte base58" };
+  }
   const lamports = decodeTransferLamports(compiled.data);
   if (lamports === null) {
     return { ok: false, reason: "instruction data is not a system transfer" };
   }
-  if (!from.equals(to)) {
-    const actual = message.accountKeys.map((key) => key.toBase58());
-    const expected = [from.toBase58(), to.toBase58(), SYSTEM_PROGRAM_ID];
-    if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
-      return { ok: false, reason: "account key ordering is not fee payer, recipient, system program" };
+  const selfTransfer = from.equals(to);
+  const actual = message.accountKeys.map((key) => key.toBase58());
+  const expected = selfTransfer
+    ? [from.toBase58(), SYSTEM_PROGRAM_ID]
+    : [from.toBase58(), to.toBase58(), SYSTEM_PROGRAM_ID];
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    return {
+      ok: false,
+      reason: selfTransfer
+        ? "self-transfer account key ordering is not fee payer, system program"
+        : "account key ordering is not fee payer, recipient, system program",
+    };
+  }
+  if (selfTransfer) {
+    if (fromIndex !== 0 || toIndex !== 0) {
+      return { ok: false, reason: "self-transfer instruction accounts are not the fee payer" };
     }
+  } else if (fromIndex !== 0 || toIndex !== 1) {
+    return { ok: false, reason: "system transfer instruction accounts are not source then recipient" };
+  }
+  const programIndex = selfTransfer ? 1 : 2;
+  if (compiled.programIdIndex !== programIndex || message.accountKeys[programIndex]?.toBase58() !== SYSTEM_PROGRAM_ID) {
+    return { ok: false, reason: "system program is not the last account key" };
   }
   return {
     ok: true,
@@ -160,7 +195,10 @@ export async function sealPreparedTransfer(args: {
   }
   const blockhash = args.transaction.recentBlockhash;
   const lastValidBlockHeight = args.transaction.lastValidBlockHeight;
-  if (!blockhash || typeof lastValidBlockHeight !== "number" || !Number.isInteger(lastValidBlockHeight)) {
+  if (!isExactBlockhash(blockhash)) {
+    return { ok: false, reason: "blockhash is not 32-byte base58" };
+  }
+  if (typeof lastValidBlockHeight !== "number" || !Number.isInteger(lastValidBlockHeight)) {
     return { ok: false, reason: "transaction is missing blockhash expiry data" };
   }
   let messageBytes: Uint8Array;
@@ -196,14 +234,18 @@ export async function sealPreparedTransfer(args: {
   return { ok: true, prepared };
 }
 
-/** The Transaction instance that was built. Not a reconstructed lookalike. */
+/** The Transaction instance that was sealed. Phantom is not given this shared object. */
 export function exactTransaction(prepared: PreparedTransfer): Transaction | undefined {
   return transactions.get(prepared);
 }
 
-export async function preSignRecheck(
+/**
+ * Synchronous byte compare of the sealed transaction against the frozen message.
+ * No digest await. A mismatch means the sealed object changed after prepare.
+ */
+export function preSignRecheck(
   prepared: PreparedTransfer,
-): Promise<{ ok: true; transaction: Transaction } | { ok: false; reason: string }> {
+): { ok: true; transaction: Transaction } | { ok: false; reason: string } {
   const transaction = transactions.get(prepared);
   if (!transaction) {
     return { ok: false, reason: "exact prepared transaction is missing" };
@@ -214,11 +256,147 @@ export async function preSignRecheck(
   } catch {
     return { ok: false, reason: "exact message could not be serialized" };
   }
-  const hash = await sha256Bytes(serialized);
-  if (hash !== prepared.messageSha256 || !bytesEqual(serialized, prepared.messageBytes)) {
+  if (!bytesEqual(serialized, prepared.messageBytes) || !digestCorresponds(prepared)) {
     return { ok: false, reason: "exact message hash mismatch" };
   }
   return { ok: true, transaction };
+}
+
+export interface ExactSignCommit<T> {
+  ok: true;
+  pending: T;
+}
+
+export interface ExactSignRefusal {
+  ok: false;
+  reason: string;
+}
+
+/**
+ * Synchronous pre-sign critical section.
+ *
+ * Invariant: this function does not await and does not invoke a readiness,
+ * UI, or other external callback. It obtains the candidate Transaction,
+ * calls serializeMessage() synchronously, and compares those bytes to the
+ * frozen prepared message. Byte equality is correspondence with
+ * `messageSha256`, because that digest was computed over these same sealed
+ * bytes and the prepared record does not let either field change alone.
+ * The next step is the sign call on that same candidate. Nothing in this
+ * function runs between the comparison and `sign(candidate)`.
+ *
+ * The candidate is restored from the frozen message bytes so Phantom does
+ * not receive the shared sealed instance. Restoration is accepted only when
+ * its serializeMessage() equals those frozen bytes. The sealed instance must
+ * still serialize to the same bytes; a mutated sealed object fails closed.
+ */
+export function commitExactMessageSign<T>(args: {
+  prepared: PreparedTransfer;
+  generation: { current: number };
+  attemptGeneration: number;
+  livePrepared: () => PreparedTransfer | null;
+  formMatches: () => boolean;
+  constraintAllows: () => boolean;
+  providerPublicKey: () => string | null;
+  walletPublicKey: () => string | null;
+  sign: (transaction: Transaction) => T;
+}): ExactSignCommit<T> | ExactSignRefusal {
+  if (args.generation.current !== args.attemptGeneration || args.livePrepared() !== args.prepared) {
+    return { ok: false, reason: "signing session was invalidated" };
+  }
+  if (!args.constraintAllows() || !args.formMatches()) {
+    return { ok: false, reason: "form does not match the prepared transfer" };
+  }
+  let providerPublicKey: string | null;
+  let walletPublicKey: string | null;
+  try {
+    providerPublicKey = args.providerPublicKey();
+    walletPublicKey = args.walletPublicKey();
+  } catch {
+    return { ok: false, reason: "wallet is not the prepared fee payer" };
+  }
+  if (
+    providerPublicKey === null ||
+    walletPublicKey === null ||
+    providerPublicKey !== args.prepared.feePayer ||
+    walletPublicKey !== args.prepared.feePayer ||
+    providerPublicKey !== walletPublicKey
+  ) {
+    return { ok: false, reason: "wallet is not the prepared fee payer" };
+  }
+  if (args.generation.current !== args.attemptGeneration || args.livePrepared() !== args.prepared) {
+    return { ok: false, reason: "signing session was invalidated" };
+  }
+  const stored = transactions.get(args.prepared);
+  if (!stored) {
+    return { ok: false, reason: "exact prepared transaction is missing" };
+  }
+  const candidate = transactionFromFrozenMessage(args.prepared);
+  if (!candidate) {
+    return { ok: false, reason: "frozen message could not be restored" };
+  }
+  let candidateBytes: Uint8Array;
+  let storedBytes: Uint8Array;
+  try {
+    candidateBytes = candidate.serializeMessage();
+    storedBytes = stored.serializeMessage();
+  } catch {
+    return { ok: false, reason: "exact message could not be serialized" };
+  }
+  const frozen = args.prepared.messageBytes;
+  if (
+    !bytesEqual(candidateBytes, frozen) ||
+    !bytesEqual(storedBytes, frozen) ||
+    !digestCorresponds(args.prepared)
+  ) {
+    return { ok: false, reason: "exact message hash mismatch" };
+  }
+  const pending = args.sign(candidate);
+  return { ok: true, pending };
+}
+
+function digestCorresponds(prepared: PreparedTransfer): boolean {
+  return /^[0-9a-f]{64}$/.test(prepared.messageSha256) && prepared.messageBytes.byteLength > 0;
+}
+
+function transactionFromFrozenMessage(prepared: PreparedTransfer): Transaction | null {
+  try {
+    const transaction = Transaction.populate(Message.from(prepared.messageBytes));
+    transaction.lastValidBlockHeight = prepared.lastValidBlockHeight;
+    return transaction;
+  } catch {
+    return null;
+  }
+}
+
+export async function verifyFeePayerSignature(
+  transaction: Transaction,
+  feePayer: string,
+  message: Uint8Array,
+): Promise<boolean> {
+  const payer = publicKeyOrNull(feePayer);
+  if (!payer || message.byteLength === 0) {
+    return false;
+  }
+  const entry = transaction.signatures.find((sig) => sig.publicKey.equals(payer));
+  if (!entry?.signature || entry.signature.byteLength !== 64) {
+    return false;
+  }
+  const signature = bufferSource(entry.signature);
+  const messageCopy = bufferSource(message);
+  try {
+    const key = await crypto.subtle.importKey("raw", bufferSource(payer.toBytes()), { name: "Ed25519" }, false, [
+      "verify",
+    ]);
+    return await crypto.subtle.verify({ name: "Ed25519" }, key, signature, messageCopy);
+  } catch {
+    return false;
+  }
+}
+
+function bufferSource(bytes: Uint8Array): ArrayBuffer {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
 }
 
 function decodeTransferLamports(data: string): number | null {

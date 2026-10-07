@@ -45,9 +45,9 @@ The page does not hold funds. There is no key store.
 
 10. **Mutating an ALLOW snapshot.** Binding, serialized stub, hashes, and approved form state are frozen. A later write does not change the approved bytes.
 
-11. **Signing a different message than the one that was prepared.** The pre-sign step reserializes the same `Transaction` and recomputes SHA-256. Any byte difference drops signing readiness, clears the prepared state, and does not call Phantom.
+11. **Signing a different message than the one that was prepared.** The synchronous critical section serializes the candidate and compares those bytes to the frozen message. The comparison and `signTransaction` have no await and no readiness callback between them. Any byte difference drops signing readiness and does not call Phantom.
 
-12. **A silent blockhash replacement.** Expiry invalidates readiness. The old blockhash stays on the old record. Rebuild creates a new prepared state. The old state cannot be signed.
+12. **A silent blockhash replacement, or a sign that outlives the prepared record.** Expiry invalidates readiness. The old blockhash stays on the old record. Rebuild creates a new prepared state and a new generation. An in-flight attempt aborts when that generation or the prepared record changes, including after a form edit, a wallet change, or a disconnect. Phantom is not called for the replaced record.
 
 13. **Broadcast or `signAndSendTransaction`.** Those calls are absent. The signed bytes stay in memory. `broadcast` on the local result is false.
 

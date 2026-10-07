@@ -1,4 +1,4 @@
-import { PublicKey, type Transaction } from "@solana/web3.js";
+import { Keypair, PublicKey, type Transaction } from "@solana/web3.js";
 import { evaluatePreview, type PreviewEvaluation } from "../../src/domain/evaluate";
 import { DEVNET_GENESIS_HASH } from "../../src/domain/networkAuthority";
 import {
@@ -15,7 +15,9 @@ export function pubkey(byte: number): string {
   return new PublicKey(Uint8Array.from({ length: 32 }, () => byte)).toBase58();
 }
 
-export const FEE_PAYER = pubkey(4);
+/** Deterministic fee payer. Signatures in tests are produced with this keypair. */
+export const TEST_PAYER = Keypair.fromSeed(Uint8Array.from({ length: 32 }, () => 4));
+export const FEE_PAYER = TEST_PAYER.publicKey.toBase58();
 export const BLOCKHASH_A = pubkey(9);
 export const BLOCKHASH_B = pubkey(10);
 
@@ -113,10 +115,10 @@ export async function preparedAllow(
 
 export function fakeSign(transaction: Transaction): Transaction {
   const payer = transaction.feePayer;
-  if (!payer) {
-    throw new Error("missing fee payer");
+  if (!payer || !payer.equals(TEST_PAYER.publicKey)) {
+    throw new Error("fee payer does not match the test signer");
   }
-  transaction.addSignature(payer, Buffer.alloc(64, 7));
+  transaction.partialSign(TEST_PAYER);
   return transaction;
 }
 

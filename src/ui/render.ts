@@ -1,7 +1,7 @@
 import { PRODUCT } from "../copy";
 import type { RecheckInput } from "../domain/evaluate";
 import type { PreviewEvaluation } from "../domain/evaluate";
-import type { SigningSession } from "../domain/signingSession";
+import { signingControlsLocked, type SigningSession } from "../domain/signingSession";
 import type { WalletSnapshot } from "../domain/types";
 import type { WalletDetection } from "../wallet/types";
 import {
@@ -118,11 +118,13 @@ function phase1Section(state: RenderState, handlers: RenderHandlers): HTMLElemen
     handlers.onSign?.();
   });
   signButton.dataset.testid = "sign-transaction";
-  signButton.disabled = session.readiness !== "ready";
+  const controlsLocked = signingControlsLocked(session);
+  signButton.disabled = controlsLocked || session.readiness !== "ready";
   const prepareButton = button(PRODUCT.prepareButton, () => {
     handlers.onPrepare?.();
   });
   prepareButton.dataset.testid = "prepare-transfer";
+  prepareButton.disabled = controlsLocked;
   return el("section", { "data-testid": "phase1" }, [
     el("h2", {}, ["DevNet transfer"]),
     el("p", {}, [
