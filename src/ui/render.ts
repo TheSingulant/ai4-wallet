@@ -156,11 +156,11 @@ function stringField(data: FormData, name: string): string {
   return typeof value === "string" ? value : "";
 }
 
-function el(
-  tag: string,
+function el<T extends keyof HTMLElementTagNameMap>(
+  tag: T,
   attrs: Record<string, string>,
   children: Array<Node | string>,
-): HTMLElement {
+): HTMLElementTagNameMap[T] {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
     if (key === "data-testid") {

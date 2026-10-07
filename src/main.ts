@@ -1,6 +1,11 @@
 import "./style.css";
-import { DISCONNECTED_WALLET, type TransferIntentInput, type WalletSnapshot } from "./domain/types";
-import { evaluatePreview, recheckAfterAllow, type FrozenAllow, type PreviewEvaluation, type RecheckInput } from "./domain/evaluate";
+import {
+  DISCONNECTED_WALLET,
+  type FrozenAllow,
+  type TransferIntentInput,
+  type WalletSnapshot,
+} from "./domain/types";
+import { evaluatePreview, recheckAfterAllow, type PreviewEvaluation, type RecheckInput } from "./domain/evaluate";
 import { CONSTRAINT_FIXTURES, DEVNET_TRANSFER, FIXTURE_DESTINATION } from "./fixtures/preview";
 import { renderApp, type RenderState } from "./ui/render";
 import { browserWalletScope, phantomAdapter } from "./wallet/phantom";
@@ -39,7 +44,7 @@ async function draw(evaluation: PreviewEvaluation): Promise<void> {
     onDisconnect: () => {
       wallet = { ...DISCONNECTED_WALLET };
       connectNote = "Wallet disconnected. Signing handoff is not available.";
-      void refresh();
+      void refresh(false);
     },
     onFixture: (name) => {
       fixtureName = name;
