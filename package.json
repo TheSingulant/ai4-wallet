@@ -1,0 +1,25 @@
+{
+  "name": "ai4-wallet",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Phase 0 DevNet preview of AI4 transaction-control checks. Not a wallet.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "secret-scan": "node scripts/secret-scan.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "happy-dom": "^20.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}
