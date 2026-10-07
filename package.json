@@ -2,7 +2,7 @@
   "name": "ai4-wallet",
   "private": true,
   "version": "0.0.0",
-  "description": "Phase 0 DevNet preview of AI4 transaction-control checks. Not a wallet.",
+  "description": "Phase 1 DevNet preview. Local Phantom signature on an exact SOL transfer. No broadcast.",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
@@ -21,5 +21,8 @@
     "typescript": "^5.9.2",
     "vite": "^8.3.3",
     "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@solana/web3.js": "1.99.0"
   }
 }

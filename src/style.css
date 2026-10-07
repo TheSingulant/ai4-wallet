@@ -76,6 +76,10 @@ select {
   margin: 0.25rem 0.4rem 0.25rem 0;
 }
 
+button:disabled {
+  opacity: 0.45;
+}
+
 input {
   display: block;
   width: 100%;

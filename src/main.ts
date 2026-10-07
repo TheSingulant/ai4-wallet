@@ -1,4 +1,5 @@
 import "./style.css";
+import { APP_DEVNET_RPC_URL, RPC_TIMEOUT_MS } from "./domain/genesisLive";
 import {
   DISCONNECTED_WALLET,
   type FrozenAllow,
@@ -11,9 +12,23 @@ import {
   type PreviewEvaluation,
   type RecheckInput,
 } from "./domain/evaluate";
+import { createPhantomIdentityBinding } from "./app/phantomIdentity";
+import { createPhase1Session } from "./app/phase1Session";
+import type { TransferForm } from "./domain/signingSession";
 import { CONSTRAINT_FIXTURES, DEVNET_TRANSFER, FIXTURE_DESTINATION } from "./fixtures/preview";
 import { renderApp, type RenderState } from "./ui/render";
-import { browserWalletScope, phantomAdapter } from "./wallet/phantom";
+import {
+  blockhashFreshnessFromConnection,
+  blockhashSourceFromConnection,
+  createAppDevnetConnection,
+  genesisRpcFromConnection,
+} from "./solana/devnetConnection";
+import {
+  browserWalletScope,
+  phantomAdapter,
+  readPhantomPublicKey,
+  signTransaction,
+} from "./wallet/phantom";
 
 const root = document.querySelector<HTMLElement>("#app");
 if (!root) {
@@ -26,22 +41,60 @@ let wallet: WalletSnapshot = DISCONNECTED_WALLET;
 let intent: TransferIntentInput = { ...DEVNET_TRANSFER };
 let fixtureName: "allow" | "revise" | "refuse" = "allow";
 let frozen: FrozenAllow | null = null;
-let connectNote = "Connect reads a public key only. Phase 0 does not request a signature.";
-let form = {
+let connectNote = "Connect reads a public key only. A signature requires a separate click.";
+let form: TransferForm = {
   amount: DEVNET_TRANSFER.amount,
   destination: FIXTURE_DESTINATION,
   network: DEVNET_TRANSFER.network,
   serializedTx: "",
 };
+let currentEvaluation: PreviewEvaluation | null = null;
 let refreshSerial = 0;
 
+const runtime = createPhase1Session({
+  getWallet: () => wallet,
+  getForm: () => form,
+  getEvaluation: () => currentEvaluation,
+  draw: async () => {
+    if (currentEvaluation) {
+      await draw(currentEvaluation);
+    }
+  },
+  readProviderPublicKey: () => readPhantomPublicKey(scope),
+  sign: (transaction) => signTransaction(scope, transaction),
+  genesisRpc: () => genesisRpcFromConnection(createAppDevnetConnection(RPC_TIMEOUT_MS)),
+  blockhashSource: () => blockhashSourceFromConnection(createAppDevnetConnection(RPC_TIMEOUT_MS)),
+  blockhashProbe: () => blockhashFreshnessFromConnection(createAppDevnetConnection(RPC_TIMEOUT_MS)),
+  timeoutMs: RPC_TIMEOUT_MS,
+});
+
+const phantomIdentity = createPhantomIdentityBinding({
+  scope,
+  getWallet: () => wallet,
+  setWallet: (next) => {
+    wallet = next;
+  },
+  setConnectNote: (note) => {
+    connectNote = note;
+  },
+  drop: (note) => runtime.drop(note),
+  afterChange: () => {
+    void refresh(false);
+  },
+});
+
 async function draw(evaluation: PreviewEvaluation): Promise<void> {
+  currentEvaluation = evaluation;
   const state: RenderState = {
     evaluation,
     wallet,
     detection: phantomAdapter.detect(scope),
     connectNote,
     form,
+    phase1: {
+      session: runtime.session,
+      rpcUrl: APP_DEVNET_RPC_URL,
+    },
   };
   renderApp(root as HTMLElement, state, {
     onConnect: () => {
@@ -50,23 +103,44 @@ async function draw(evaluation: PreviewEvaluation): Promise<void> {
     onDisconnect: () => {
       wallet = DISCONNECTED_WALLET;
       connectNote = "Wallet disconnected. Signing readiness is unavailable.";
+      runtime.drop("wallet session changed; signing readiness is unavailable");
       void refresh(false);
     },
     onFixture: (name) => {
       fixtureName = name;
       intent = { ...DEVNET_TRANSFER };
+      runtime.drop("constraint fixture changed; signing readiness is unavailable");
       void refresh(true);
     },
     onMainnet: () => {
       intent = { ...DEVNET_TRANSFER, network: "mainnet-beta" };
+      runtime.drop("network intent changed; signing readiness is unavailable");
       void refresh(true);
     },
     onDevnetIntent: () => {
       intent = { ...DEVNET_TRANSFER };
+      runtime.drop("network intent changed; signing readiness is unavailable");
       void refresh(true);
     },
     onRecheck: (next) => {
       void recheck(next);
+    },
+    onPrepare: () => {
+      void runtime.prepare();
+    },
+    onSign: () => {
+      void runtime.sign();
+    },
+    onFormInput: () => {
+      const next = readForm();
+      if (!next || sameForm(next, form)) {
+        return;
+      }
+      form = next;
+      runtime.drop("form changed; signing readiness is unavailable");
+      if (currentEvaluation) {
+        void draw(currentEvaluation);
+      }
     },
   });
 }
@@ -90,7 +164,7 @@ async function refresh(resetForm: boolean): Promise<void> {
   await draw(evaluation);
 }
 
-function mutableForm(evaluation: PreviewEvaluation): RenderState["form"] {
+function mutableForm(evaluation: PreviewEvaluation): TransferForm {
   const approved = evaluation.frozen?.approvedForm;
   if (approved) {
     return {
@@ -113,14 +187,22 @@ async function connect(): Promise<void> {
   if (!detection.present) {
     wallet = DISCONNECTED_WALLET;
     connectNote = "Phantom was not detected.";
+    runtime.drop("wallet session changed; signing readiness is unavailable");
     await refresh(false);
     return;
   }
-  wallet = await phantomAdapter.connect(scope);
+  const next = await phantomAdapter.connect(scope);
+  const changed =
+    next.status !== wallet.status || next.publicKey !== wallet.publicKey || next.source !== wallet.source;
+  wallet = next;
   connectNote =
     wallet.status === "connected"
-      ? "Phantom connect stub returned a public key. No signature was requested."
+      ? "Phantom returned a public key. No signature was requested."
       : "Phantom connect did not return a public key.";
+  if (changed) {
+    runtime.drop("wallet session changed; signing readiness is unavailable");
+  }
+  phantomIdentity.bind();
   await refresh(false);
 }
 
@@ -128,6 +210,7 @@ async function recheck(next: RecheckInput): Promise<void> {
   const serial = ++refreshSerial;
   const sessionWallet = wallet;
   form = { ...next };
+  runtime.drop("recheck ran; signing readiness is unavailable");
   if (!frozen) {
     const evaluation = await evaluatePreview({
       intent,
@@ -157,4 +240,33 @@ async function recheck(next: RecheckInput): Promise<void> {
   await draw(result);
 }
 
+function readForm(): TransferForm | null {
+  const formEl = root?.querySelector<HTMLFormElement>("[data-testid='recheck-form']");
+  if (!formEl) {
+    return null;
+  }
+  const data = new FormData(formEl);
+  return {
+    amount: stringField(data, "amount"),
+    destination: stringField(data, "destination"),
+    network: stringField(data, "network"),
+    serializedTx: stringField(data, "serializedTx"),
+  };
+}
+
+function sameForm(left: TransferForm, right: TransferForm): boolean {
+  return (
+    left.amount === right.amount &&
+    left.destination === right.destination &&
+    left.network === right.network &&
+    left.serializedTx === right.serializedTx
+  );
+}
+
+function stringField(data: FormData, name: string): string {
+  const value = data.get(name);
+  return typeof value === "string" ? value : "";
+}
+
+phantomIdentity.bind();
 void refresh(true);
