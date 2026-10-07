@@ -22,14 +22,15 @@ Identity verification: Preview / Production verifier not active.
 ## What Phase 0 can show
 
 - A static SOL transfer fixture.
-- ALLOW, REVISE, or REFUSE from that fixture.
-- DENY when the DevNet guard or a post-ALLOW recheck fails.
-- Phantom detection and a connect stub that stops at a public key.
-- A comparison of amount, destination, network, and the serialized preview stub against the ALLOW binding.
+- Constraint result ALLOW, REVISE, or REFUSE from that fixture.
+- Signing readiness unavailable or not_ready. Phase 0 does not reach ready.
+- DENY when the DevNet guard or a post-ALLOW parameter recheck fails.
+- Phantom detection and a connect stub that returns a public key. The public key is not a network.
+- A comparison of amount, destination, network, and the serialized preview stub against the frozen ALLOW snapshot, using the current wallet session.
 
 ## Develop
 
-Requires Node 22 or newer.
+Requires Node 22.12.0 or newer.
 
 ```bash
 npm ci

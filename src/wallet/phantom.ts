@@ -7,7 +7,6 @@ interface PublicKeyLike {
 
 interface PhantomProvider {
   isPhantom?: boolean;
-  cluster?: string;
   connect: () => Promise<{ publicKey?: PublicKeyLike | null }>;
 }
 
@@ -30,25 +29,21 @@ export function detectPhantom(scope: WalletScope): WalletDetection {
 export async function connectPhantom(scope: WalletScope): Promise<WalletSnapshot> {
   const provider = readProvider(scope.getProvider("phantom"));
   if (!provider) {
-    return {
-      ...DISCONNECTED_WALLET,
-    };
+    return DISCONNECTED_WALLET;
   }
   try {
     const result = await provider.connect();
     const publicKey = result.publicKey?.toString() ?? "";
     if (publicKey.trim() === "") {
-      return { ...DISCONNECTED_WALLET };
+      return DISCONNECTED_WALLET;
     }
-    const network = typeof provider.cluster === "string" ? provider.cluster : null;
-    return {
+    return Object.freeze({
       status: "connected",
       publicKey,
-      network,
       source: "phantom",
-    };
+    });
   } catch {
-    return { ...DISCONNECTED_WALLET };
+    return DISCONNECTED_WALLET;
   }
 }
 

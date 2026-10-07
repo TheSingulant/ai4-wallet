@@ -1,8 +1,8 @@
 import type { RecheckInput } from "../domain/evaluate";
-import type { WalletDetection } from "../wallet/types";
-import { buildView, type AppView } from "./view";
 import type { PreviewEvaluation } from "../domain/evaluate";
 import type { WalletSnapshot } from "../domain/types";
+import type { WalletDetection } from "../wallet/types";
+import { buildView, type AppView } from "./view";
 
 export interface RenderState {
   evaluation: PreviewEvaluation;
@@ -23,7 +23,6 @@ export interface RenderHandlers {
   onFixture: (name: "allow" | "revise" | "refuse") => void;
   onMainnet: () => void;
   onDevnetIntent: () => void;
-  onSimulateCluster: (cluster: string) => void;
   onRecheck: (next: RecheckInput) => void;
 }
 
@@ -56,7 +55,6 @@ export function renderApp(
       el("p", { "data-testid": "connect-note" }, [state.connectNote]),
       button("Connect Phantom", handlers.onConnect),
       button("Disconnect", handlers.onDisconnect),
-      clusterSelect(handlers),
     ]),
     el("section", {}, [
       el("h2", {}, ["Constraint result"]),
@@ -66,11 +64,11 @@ export function renderApp(
       button("REFUSE fixture", () => handlers.onFixture("refuse")),
       button("Attempt mainnet", handlers.onMainnet),
       button("Use DevNet intent", handlers.onDevnetIntent),
-      el("p", { "data-testid": "decision" }, [view.decision]),
+      el("p", { "data-testid": "decision" }, [view.constraintLine]),
+      el("p", { "data-testid": "signing-readiness" }, [view.signingLine]),
       list(view.reasons, "reasons"),
       el("h3", {}, ["Approved binding"]),
       list(view.bindingLines, "binding"),
-      el("p", { "data-testid": "signing-handoff" }, [view.signingLine]),
     ]),
     recheckSection(state, handlers),
   );
@@ -82,7 +80,7 @@ function recheckSection(state: RenderState, handlers: RenderHandlers): HTMLEleme
   const form = el("form", { "data-testid": "recheck-form" }, [
     el("h2", {}, ["Recheck after ALLOW"]),
     el("p", {}, [
-      "Compare amount, destination, network, and serialized transaction with the last ALLOW snapshot.",
+      "Compare amount, destination, network, and serialized transaction with the frozen ALLOW snapshot. Recheck uses the current wallet session.",
     ]),
     field("Amount", "amount", state.form.amount),
     field("Destination", "destination", state.form.destination),
@@ -103,29 +101,6 @@ function recheckSection(state: RenderState, handlers: RenderHandlers): HTMLEleme
   return form;
 }
 
-function clusterSelect(handlers: RenderHandlers): HTMLElement {
-  const select = document.createElement("select");
-  select.dataset.testid = "cluster-simulation";
-  select.setAttribute("aria-label", "Wallet cluster simulation");
-  const options: Array<[string, string]> = [
-    ["", "Wallet cluster simulation"],
-    ["devnet", "Simulate devnet"],
-    ["mainnet-beta", "Simulate mainnet-beta"],
-    ["testnet", "Simulate testnet"],
-  ];
-  for (const [value, label] of options) {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = label;
-    select.append(option);
-  }
-  select.addEventListener("change", () => {
-    handlers.onSimulateCluster(select.value);
-  });
-  const wrap = el("label", {}, ["Cluster simulation. This page does not switch a wallet.", select]);
-  return wrap;
-}
-
 function field(label: string, name: string, value: string): HTMLElement {
   const input = document.createElement("input");
   input.name = name;
@@ -135,7 +110,7 @@ function field(label: string, name: string, value: string): HTMLElement {
   return el("label", {}, [label, input]);
 }
 
-function list(items: string[], testId: string): HTMLElement {
+function list(items: readonly string[], testId: string): HTMLElement {
   const ul = el("ul", { "data-testid": testId }, []);
   for (const item of items) {
     ul.append(el("li", {}, [item]));

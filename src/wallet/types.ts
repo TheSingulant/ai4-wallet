@@ -3,7 +3,8 @@ import type { WalletSnapshot } from "../domain/types";
 /**
  * Wallet adapter boundary.
  * Phase 0 implements Phantom detection and connect only.
- * A later adapter can use the same shape for another transport or chain family.
+ * connect returns identity: connected or disconnected, a public key, and a source.
+ * It does not choose the preview network.
  * This interface has no sign method and no send method.
  */
 export interface WalletScope {

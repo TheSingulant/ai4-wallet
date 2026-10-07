@@ -1,7 +1,8 @@
 import { PRODUCT } from "../copy";
 import { isDevnet } from "../domain/devnetGuard";
 import type { PreviewEvaluation } from "../domain/evaluate";
-import type { WalletSnapshot } from "../domain/types";
+import type { Phase0SigningReadiness, WalletSnapshot } from "../domain/types";
+import type { VerifyStatus } from "../domain/verify";
 
 export interface AppView {
   title: string;
@@ -11,11 +12,29 @@ export interface AppView {
   networkLine: string;
   requiredLine: string;
   walletLine: string;
-  decision: string;
-  reasons: string[];
+  constraintLine: string;
+  reasons: readonly string[];
   bindingLines: string[];
   signingLine: string;
   phase: string;
+}
+
+export function verifyLine(verify: VerifyStatus): string {
+  return `Identity verification: ${verify.label} / ${verify.detail}`;
+}
+
+export function signingReadinessLine(readiness: Phase0SigningReadiness): string {
+  if (readiness === "not_ready") {
+    return PRODUCT.signingNotReady;
+  }
+  return PRODUCT.signingUnavailable;
+}
+
+export function constraintResultLine(evaluation: PreviewEvaluation): string {
+  if (evaluation.constraintResult) {
+    return `Constraint result: ${evaluation.constraintResult}`;
+  }
+  return `Transaction control: ${evaluation.decision}`;
 }
 
 export function buildView(evaluation: PreviewEvaluation, wallet: WalletSnapshot): AppView {
@@ -33,22 +52,20 @@ export function buildView(evaluation: PreviewEvaluation, wallet: WalletSnapshot)
           `serialized_tx_sha256: ${evaluation.serializedTxSha256 ?? ""}`,
         ];
 
-  const guardNote = isDevnet(evaluation.networkDisplay)
-    ? ""
-    : " Phase 0 requires DevNet.";
+  const guardNote = isDevnet(evaluation.networkDisplay) ? "" : " Phase 0 requires DevNet.";
 
   return {
     title: PRODUCT.title,
     subtitle: PRODUCT.subtitle,
     custody: PRODUCT.custody,
-    verify: PRODUCT.verify,
+    verify: verifyLine(evaluation.verify),
     networkLine: `Network: ${evaluation.networkDisplay}.${guardNote}`.trim(),
     requiredLine: "Required network: DevNet.",
     walletLine: walletLine(wallet),
-    decision: evaluation.decision,
+    constraintLine: constraintResultLine(evaluation),
     reasons: evaluation.reasons,
     bindingLines,
-    signingLine: PRODUCT.signingNone,
+    signingLine: signingReadinessLine(evaluation.signingReadiness),
     phase: PRODUCT.phase,
   };
 }
@@ -62,7 +79,7 @@ export function collectViewText(view: AppView): string {
     view.networkLine,
     view.requiredLine,
     view.walletLine,
-    view.decision,
+    view.constraintLine,
     ...view.reasons,
     ...view.bindingLines,
     view.signingLine,
@@ -74,10 +91,9 @@ function walletLine(wallet: WalletSnapshot): string {
   if (wallet.status === "disconnected") {
     return "Wallet: disconnected.";
   }
-  const cluster = wallet.network ?? "(not reported)";
-  if (wallet.source === "simulation") {
-    return `Wallet: cluster simulation ${cluster}. Not a live wallet.`;
-  }
   const key = wallet.publicKey ?? "(no public key)";
-  return `Wallet: connected ${key}. Cluster ${cluster}.`;
+  if (wallet.source === "simulation") {
+    return `Wallet: connected ${key}. Simulated identity. Not a live wallet.`;
+  }
+  return `Wallet: connected ${key}.`;
 }

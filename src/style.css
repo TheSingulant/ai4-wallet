@@ -57,9 +57,10 @@ section {
   margin: 0;
 }
 
-[data-testid="decision"] {
+[data-testid="decision"],
+[data-testid="signing-readiness"] {
   font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
-  font-size: 1.35rem;
+  font-size: 1.15rem;
   font-weight: 700;
   margin-top: 0.8rem;
 }
