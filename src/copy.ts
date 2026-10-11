@@ -21,6 +21,8 @@ export const PRODUCT = {
   phase1Failed: "Signing status: Failed.",
   prepareButton: "Prepare DevNet transfer",
   signButton: "Sign transaction",
+  signHint: "Sign within about a minute of Prepare.",
+  preparedExpired: "Prepared transfer expired. Prepare again.",
   notBroadcast: "Not broadcast.",
   auditNote: "Approved binding SHA-256 is an audit digest. It does not authorize this signature.",
 } as const;

@@ -10,6 +10,7 @@ import {
   FIXTURE_DESTINATION,
   KNOWN_BINDING_JSON,
   KNOWN_BINDING_SHA256,
+  KNOWN_SERIALIZED_TX_SHA256,
 } from "../src/fixtures/preview";
 
 const CONNECTED: WalletSnapshot = {
@@ -33,6 +34,8 @@ describe("approved binding", () => {
     expect(await sha256Hex(json)).toBe(KNOWN_BINDING_SHA256);
     expect(evaluation.approvedBinding?.sha256).toBe(KNOWN_BINDING_SHA256);
     expect(evaluation.serializedTx).toBe(canonicalSerializedTx(evaluation.approvedBinding!));
+    expect(evaluation.serializedTxSha256).toBe(KNOWN_SERIALIZED_TX_SHA256);
+    expect(await sha256Hex(evaluation.serializedTx!)).toBe(KNOWN_SERIALIZED_TX_SHA256);
     expect(evaluation.signingHandoff).toBeNull();
     expect(evaluation.signingReadiness).toBe("unavailable");
   });

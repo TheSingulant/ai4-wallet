@@ -55,8 +55,10 @@ describe("phase-1 signing races", () => {
       const outcome = await signIfGated(input as unknown as SignInput);
       expect(phantom, omitted).toBe(false);
       expect(outcome.phantomCalled, omitted).toBe(false);
-      expect(outcome.session, omitted).toBe(session);
-      expect(outcome.session.readiness, omitted).toBe("ready");
+      expect(outcome.session.readiness, omitted).toBe("failed");
+      expect(outcome.session.signed, omitted).toBeNull();
+      expect(outcome.session.note, omitted).toMatch(/Signing guards are incomplete/);
+      expect(outcome.session.prepared?.blockhash, omitted).toBe(session.prepared?.blockhash);
     }
   });
 
@@ -171,7 +173,8 @@ describe("phase-1 signing races", () => {
     expect(phantom).toBe(false);
     expect(outcome.phantomCalled).toBe(false);
     expect(outcome.session.readiness).not.toBe("signed");
-    expect(outcome.session.readiness).toBe("unavailable");
+    expect(outcome.session.readiness).toBe("failed");
+    expect(outcome.session.signed).toBeNull();
     expect(outcome.session.note).toMatch(/form/);
     expect(generation.current).toBe(attemptGeneration);
   });

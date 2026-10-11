@@ -119,7 +119,11 @@ describe("Phase 1 preview UI", () => {
           network: "devnet",
           serializedTx: evaluation.serializedTx ?? "",
         },
-        phase1: { session, rpcUrl: APP_DEVNET_RPC_URL },
+        phase1: {
+          session,
+          rpcUrl: APP_DEVNET_RPC_URL,
+          nowMs: session.prepared?.preparedAtMs,
+        },
       },
       {
         ...handlers,
@@ -135,6 +139,10 @@ describe("Phase 1 preview UI", () => {
     expect(root.querySelector("[data-testid='phase1-readiness']")?.textContent).toBe(
       "Signing status: Ready.",
     );
+    expect(root.querySelector("[data-testid='prepared-expiry']")?.textContent).toBe(
+      "Prepared transfer expires in 1:00.",
+    );
+    expect(root.querySelector("[data-testid='sign-hint']")?.textContent).toBe(PRODUCT.signHint);
     expect(root.querySelector("[data-testid='message-hash']")?.textContent).toMatch(
       /^Exact message binding: [0-9a-f]{64}$/,
     );

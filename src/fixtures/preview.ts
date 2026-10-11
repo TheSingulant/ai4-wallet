@@ -37,3 +37,7 @@ export const KNOWN_BINDING_JSON =
 
 export const KNOWN_BINDING_SHA256 =
   "fe30e76ac25e766f37d4f719caaa7efa7b2603afbf388dbca609154258a37da0";
+
+/** SHA-256 of the deterministic preview stub for the known 0.001 SOL binding. Not a wire transaction. */
+export const KNOWN_SERIALIZED_TX_SHA256 =
+  "26f0520f375e6a764da357a912d961acc41894422f934619360c82adc6a4f9bb";

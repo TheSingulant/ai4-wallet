@@ -7,6 +7,7 @@ import type { WalletDetection } from "../wallet/types";
 import {
   auditDigestLine,
   blockhashLine,
+  expiryLine,
   feePayerLine,
   genesisStatusLine,
   messageHashLine,
@@ -18,6 +19,8 @@ import { buildView, type AppView } from "./view";
 export interface Phase1RenderState {
   session: SigningSession;
   rpcUrl: string;
+  /** Clock for the expiry line. The live page uses Date.now. */
+  nowMs?: number;
 }
 
 export interface RenderState {
@@ -143,10 +146,14 @@ function phase1Section(state: RenderState, handlers: RenderHandlers): HTMLElemen
     el("p", { "data-testid": "message-hash", class: "technical-detail" }, [messageHashLine(session)]),
     el("p", { "data-testid": "audit-digest", class: "technical-detail" }, [auditDigestLine(session)]),
     el("p", { "data-testid": "blockhash", class: "technical-detail" }, [blockhashLine(session)]),
+    el("p", { "data-testid": "prepared-expiry" }, [
+      expiryLine(session, state.phase1.nowMs ?? Date.now()),
+    ]),
     el("p", { "data-testid": "phase1-note" }, [session.note]),
     el("p", { "data-testid": "broadcast-status" }, [PRODUCT.notBroadcast]),
     el("p", { "data-testid": "signed-result", class: "technical-detail" }, [signedResultLine(session)]),
     prepareButton,
+    el("p", { "data-testid": "sign-hint" }, [PRODUCT.signHint]),
     signButton,
   ]);
 }

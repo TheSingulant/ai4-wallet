@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PRODUCT } from "../src/copy";
 import { exactTransaction } from "../src/domain/nativeTransfer";
 import { runPrepare, signIfGated } from "../src/domain/signingSession";
 import {
@@ -52,9 +53,9 @@ describe("blockhash expiry", () => {
   });
 
   it.each([
-    ["rpc reports the blockhash invalid", { valid: false, height: 50 }, /no longer valid/],
-    ["block height is past the last valid height", { valid: true, height: 101 }, /expired/],
-  ] as const)("does not replace the blockhash when %s", async (_label, probe, reason) => {
+    ["rpc reports the blockhash invalid", { valid: false, height: 50 }],
+    ["block height is past the last valid height", { valid: true, height: 101 }],
+  ] as const)("does not replace the blockhash when %s", async (_label, probe) => {
     const { session, form } = await preparedAllow();
     const prepared = session.prepared!;
     const transaction = exactTransaction(prepared)!;
@@ -73,9 +74,10 @@ describe("blockhash expiry", () => {
       },
     });
     expect(outcome.phantomCalled).toBe(false);
-    expect(outcome.session.readiness).toBe("unavailable");
-    expect(outcome.session.prepared).toBeNull();
-    expect(outcome.session.note).toMatch(reason);
+    expect(outcome.session.readiness).toBe("failed");
+    expect(outcome.session.signed).toBeNull();
+    expect(outcome.session.prepared).toBe(prepared);
+    expect(outcome.session.note).toBe(PRODUCT.preparedExpired);
     expect(prepared.blockhash).toBe(BLOCKHASH_A);
     expect(transaction.recentBlockhash).toBe(BLOCKHASH_A);
     expect(prepared.lastValidBlockHeight).toBe(100);
@@ -99,8 +101,10 @@ describe("blockhash expiry", () => {
       },
     });
     expect(timedOut.phantomCalled).toBe(false);
-    expect(timedOut.session.readiness).toBe("unavailable");
+    expect(timedOut.session.readiness).toBe("failed");
+    expect(timedOut.session.signed).toBeNull();
     expect(timedOut.session.note).toMatch(/timed out/);
+    expect(timedOut.session.prepared?.blockhash).toBe(BLOCKHASH_A);
     expect(session.prepared?.blockhash).toBe(BLOCKHASH_A);
 
     const failed = await signIfGated({
@@ -120,7 +124,9 @@ describe("blockhash expiry", () => {
       },
     });
     expect(failed.phantomCalled).toBe(false);
-    expect(failed.session.prepared).toBeNull();
+    expect(failed.session.readiness).toBe("failed");
+    expect(failed.session.signed).toBeNull();
+    expect(failed.session.prepared?.blockhash).toBe(BLOCKHASH_A);
     expect(failed.session.note).toMatch(/failed/);
   });
 
@@ -141,7 +147,10 @@ describe("blockhash expiry", () => {
         throw new Error("should not sign");
       },
     });
-    expect(expired.session.prepared).toBeNull();
+    expect(expired.session.readiness).toBe("failed");
+    expect(expired.session.note).toBe(PRODUCT.preparedExpired);
+    expect(expired.session.prepared).toBe(oldPrepared);
+    expect(expired.session.prepared?.blockhash).toBe(BLOCKHASH_A);
 
     const rebuilt = await runPrepare({
       decision: evaluation.decision,

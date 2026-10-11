@@ -11,6 +11,7 @@ import {
   exactTransaction,
   isExactBlockhash,
   readSystemTransferMessage,
+  COMPUTE_BUDGET_PROGRAM_ID,
   SYSTEM_PROGRAM_ID,
 } from "../src/domain/nativeTransfer";
 import { runPrepare, signIfGated, signingControlsLocked } from "../src/domain/signingSession";
@@ -90,8 +91,10 @@ describe("pre-sign integrity", () => {
     });
     expect(phantom).toBe(false);
     expect(outcome.phantomCalled).toBe(false);
-    expect(outcome.session.readiness).toBe("unavailable");
-    expect(outcome.session.prepared).toBeNull();
+    expect(outcome.session.readiness).toBe("failed");
+    expect(outcome.session.signed).toBeNull();
+    expect(outcome.session.note).toMatch(/exact message hash mismatch/);
+    expect(outcome.session.prepared?.blockhash).toBe(BLOCKHASH_A);
   });
 
   it("does not sign when a readiness callback mutates the sealed transaction", async () => {
@@ -116,7 +119,9 @@ describe("pre-sign integrity", () => {
     });
     expect(phantom).toBe(false);
     expect(outcome.phantomCalled).toBe(false);
-    expect(outcome.session.readiness).toBe("unavailable");
+    expect(outcome.session.readiness).toBe("failed");
+    expect(outcome.session.signed).toBeNull();
+    expect(outcome.session.note).toMatch(/exact message hash mismatch/);
   });
 
   it("aborts before Phantom when the generation changes during an await", async () => {
@@ -173,7 +178,8 @@ describe("pre-sign integrity", () => {
     });
     expect(phantom).toBe(false);
     expect(outcome.phantomCalled).toBe(false);
-    expect(outcome.session.readiness).toBe("unavailable");
+    expect(outcome.session.readiness).toBe("failed");
+    expect(outcome.session.signed).toBeNull();
     expect(outcome.session.note).toMatch(/fee payer/);
   });
 
@@ -296,28 +302,28 @@ describe("pre-sign integrity", () => {
     }
     expect(shape.shape.feePayer).toBe(FEE_PAYER);
     expect(shape.shape.recipient).toBe(FEE_PAYER);
-    expect(shape.shape.accountKeys).toEqual([FEE_PAYER, SYSTEM_PROGRAM_ID]);
+    expect(shape.shape.accountKeys).toEqual([FEE_PAYER, SYSTEM_PROGRAM_ID, COMPUTE_BUDGET_PROGRAM_ID]);
+    expect(shape.shape.numReadonlyUnsignedAccounts).toBe(2);
     expect(shape.shape.instructionAccounts).toEqual([FEE_PAYER, FEE_PAYER]);
 
     const compiled = self.compileMessage();
     const extra = new PublicKey(Uint8Array.from({ length: 32 }, () => 8));
-    const system = compiled.accountKeys[1];
     const payerKey = compiled.accountKeys[0];
-    const instruction = compiled.instructions[0];
-    if (!system || !payerKey || !instruction) {
+    const system = compiled.accountKeys[1];
+    const budget = compiled.accountKeys[2];
+    const transfer = compiled.instructions[2];
+    if (!system || !payerKey || !budget || !transfer) {
       throw new Error("self-transfer message was incomplete");
     }
     const tampered = new Message({
       header: compiled.header,
-      accountKeys: [payerKey, extra, system],
+      accountKeys: [payerKey, extra, system, budget],
       recentBlockhash: compiled.recentBlockhash,
-      instructions: [
-        {
-          programIdIndex: 2,
-          accounts: [0, 0],
-          data: instruction.data,
-        },
-      ],
+      instructions: compiled.instructions.map((instruction, index) =>
+        index === 2
+          ? { programIdIndex: 2, accounts: [0, 0], data: instruction.data }
+          : { programIdIndex: 3, accounts: [], data: instruction.data },
+      ),
     });
     self.compileMessage = () => tampered;
     const rejected = readSystemTransferMessage(self);
@@ -413,8 +419,10 @@ describe("pre-sign integrity", () => {
     releaseGenesis(DEVNET_GENESIS_HASH);
     await stale;
     expect(phantom).toBe(1);
-    expect(runtime.session.readiness).toBe("unavailable");
-    expect(runtime.session.prepared).toBeNull();
+    expect(runtime.session.readiness).toBe("failed");
+    expect(runtime.session.signed).toBeNull();
+    expect(runtime.session.note).toMatch(/fee payer/);
+    expect(runtime.session.prepared).toBe(nextPrepared);
     expect(nextPrepared).not.toBeNull();
   });
 

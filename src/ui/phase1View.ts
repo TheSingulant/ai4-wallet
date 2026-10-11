@@ -1,6 +1,10 @@
 import { PRODUCT } from "../copy";
 import type { LiveGenesisCheck } from "../domain/genesisLive";
-import type { Phase1SigningReadiness, SigningSession } from "../domain/signingSession";
+import {
+  preparedExpiresAtMs,
+  type Phase1SigningReadiness,
+  type SigningSession,
+} from "../domain/signingSession";
 
 export function genesisStatusLine(session: {
   readiness: Phase1SigningReadiness;
@@ -47,6 +51,28 @@ export function auditDigestLine(session: SigningSession): string {
     return "Intent binding: none.";
   }
   return `Intent binding: ${session.prepared.bindingSha256}. ${PRODUCT.auditNote}`;
+}
+
+export function expiryLine(session: SigningSession, nowMs: number): string {
+  if (session.note === PRODUCT.preparedExpired) {
+    return PRODUCT.preparedExpired;
+  }
+  const prepared = session.prepared;
+  if (!prepared || (session.readiness !== "ready" && session.readiness !== "signing")) {
+    return "Prepared transfer expiry: none.";
+  }
+  const remaining = preparedExpiresAtMs(prepared) - nowMs;
+  if (remaining <= 0) {
+    return "Prepared transfer expires in 0:00.";
+  }
+  return `Prepared transfer expires in ${formatRemaining(remaining)}.`;
+}
+
+function formatRemaining(remainingMs: number): string {
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes)}:${String(seconds).padStart(2, "0")}`;
 }
 
 export function blockhashLine(session: SigningSession): string {

@@ -1,3 +1,4 @@
+import { PRODUCT } from "../copy";
 import { parseSolAmount } from "./amount";
 import { validateSolanaAddress } from "./address";
 import { bytesEqual, canonicalBindingJson, copyBytes, sha256Bytes, sha256Hex } from "./canonical";
@@ -206,6 +207,72 @@ export function signingControlsLocked(session: Pick<SigningSession, "inFlight" |
   return session.inFlight || session.readiness === "signing" || session.readiness === "preparing";
 }
 
+/**
+ * DevNet blockhashes last about 60 to 90 seconds.
+ * The page expires at 60 seconds. It does not write a new blockhash onto the old record.
+ */
+export const PREPARED_TRANSFER_TTL_MS = 60_000;
+
+export function preparedExpiresAtMs(prepared: PreparedTransfer): number {
+  return prepared.preparedAtMs + PREPARED_TRANSFER_TTL_MS;
+}
+
+export function isPreparedExpired(prepared: PreparedTransfer, nowMs: number): boolean {
+  return nowMs >= preparedExpiresAtMs(prepared);
+}
+
+/**
+ * Move a ready session to failed when the visible window has elapsed.
+ * The prepared blockhash is left as it was. A later prepare builds a new record.
+ */
+export function expirePreparedSession(
+  session: SigningSession,
+  nowMs: number,
+  generation = session.generation,
+): SigningSession {
+  if (session.readiness !== "ready" || session.prepared === null || session.inFlight) {
+    return session;
+  }
+  if (!isPreparedExpired(session.prepared, nowMs)) {
+    return session;
+  }
+  const blockhash = session.prepared.blockhash;
+  const expired = failed(
+    PRODUCT.preparedExpired,
+    session.prepared,
+    session.genesis,
+    session.formSnapshot,
+    generation,
+  );
+  if (expired.prepared?.blockhash !== blockhash) {
+    return failed("prepared transfer blockhash changed", null, session.genesis, null, generation);
+  }
+  return expired;
+}
+
+/** A visible sign or prepare refusal. The blockhash on `prepared` is not rewritten. */
+export function failSigningSession(
+  session: SigningSession,
+  note: string,
+  generation = session.generation,
+  prepared: SigningSession["prepared"] = session.prepared,
+): SigningSession {
+  return failed(note, prepared, session.genesis, session.formSnapshot, generation);
+}
+
+export function replaceSigningNote(session: SigningSession, note: string): SigningSession {
+  return sealSession({
+    readiness: session.readiness,
+    prepared: session.prepared,
+    signed: session.signed,
+    genesis: session.genesis,
+    note,
+    formSnapshot: session.formSnapshot,
+    generation: session.generation,
+    inFlight: session.inFlight,
+  });
+}
+
 export function markSigningAttempt(session: SigningSession): SigningSession {
   return sealSession({
     readiness: "signing",
@@ -410,7 +477,16 @@ export async function runPrepare(input: PrepareInput): Promise<SigningSession> {
  */
 export async function signIfGated(input: SignInput): Promise<SignOutcome> {
   if (!liveSignGuardsPresent(input)) {
-    return { session: input.session, phantomCalled: false };
+    return {
+      session: failed(
+        "Sign stopped before Phantom. Signing guards are incomplete.",
+        input.session.prepared,
+        input.session.genesis,
+        input.session.formSnapshot,
+        finiteGeneration(input.attemptGeneration, input.session.generation),
+      ),
+      phantomCalled: false,
+    };
   }
   const timeoutMs = input.timeoutMs ?? RPC_TIMEOUT_MS;
   const source = input.generation;
@@ -423,26 +499,41 @@ export async function signIfGated(input: SignInput): Promise<SignOutcome> {
 
   const current = input.session.prepared;
   if (input.candidate !== undefined && input.candidate !== current) {
+    if (input.session.inFlight || input.session.readiness === "signing") {
+      return refuse(
+        "Sign stopped before Phantom. The prepared transfer changed.",
+        current,
+        input.session.genesis,
+        input.session.formSnapshot,
+        attempt,
+      );
+    }
     return { session: input.session, phantomCalled: false };
   }
   if (!openForSign(input.session) || current === null) {
-    return { session: input.session, phantomCalled: false };
+    return notOpenForSign(input.session, attempt);
   }
   const prepared = current;
   if (source.current !== attempt || liveSession().prepared !== prepared) {
     return invalidated(input, liveSession, prepared, attempt, input.session.genesis);
   }
   if (!connectedPhantom(input.wallet) || input.wallet.publicKey !== prepared.feePayer) {
-    return {
-      session: unavailable("wallet is not the prepared fee payer", input.session.genesis, attempt),
-      phantomCalled: false,
-    };
+    return refuse(
+      "wallet is not the prepared fee payer",
+      prepared,
+      input.session.genesis,
+      input.session.formSnapshot,
+      attempt,
+    );
   }
   if (!bindingStillMatches(liveForm(), liveSession(), prepared) || !constraintStillAllow()) {
-    return {
-      session: unavailable("form does not match the prepared transfer", input.session.genesis, attempt),
-      phantomCalled: false,
-    };
+    return refuse(
+      "form does not match the prepared transfer",
+      prepared,
+      input.session.genesis,
+      input.session.formSnapshot,
+      attempt,
+    );
   }
 
   const genesis = await verifyAppDevnetGenesis(input.genesisRpc, timeoutMs);
@@ -450,22 +541,19 @@ export async function signIfGated(input: SignInput): Promise<SignOutcome> {
     return invalidated(input, liveSession, prepared, attempt, genesis);
   }
   if (!genesis.ok) {
-    return {
-      session: unavailable(genesis.reason ?? "genesis freshness check failed", genesis, attempt),
-      phantomCalled: false,
-    };
+    return refuse(
+      genesis.reason ?? "genesis freshness check failed",
+      prepared,
+      genesis,
+      input.session.formSnapshot,
+      attempt,
+    );
   }
   if (!bindingStillMatches(liveForm(), liveSession(), prepared) || !constraintStillAllow()) {
-    return {
-      session: unavailable("form does not match the prepared transfer", genesis, attempt),
-      phantomCalled: false,
-    };
+    return refuse("form does not match the prepared transfer", prepared, genesis, input.session.formSnapshot, attempt);
   }
   if (!walletStillFeePayer(liveWallet(), prepared) || !walletStillFeePayer(input.wallet, prepared)) {
-    return {
-      session: unavailable("wallet is not the prepared fee payer", genesis, attempt),
-      phantomCalled: false,
-    };
+    return refuse("wallet is not the prepared fee payer", prepared, genesis, input.session.formSnapshot, attempt);
   }
 
   const freshness = await blockhashStillValid(input.blockhashProbe, prepared, timeoutMs);
@@ -473,22 +561,14 @@ export async function signIfGated(input: SignInput): Promise<SignOutcome> {
     return invalidated(input, liveSession, prepared, attempt, genesis);
   }
   if (!freshness.valid) {
-    return {
-      session: unavailable(freshness.reason, genesis, attempt),
-      phantomCalled: false,
-    };
+    const note = isBlockhashExpiry(freshness.reason) ? PRODUCT.preparedExpired : freshness.reason;
+    return refuse(note, prepared, genesis, input.session.formSnapshot, attempt);
   }
   if (!bindingStillMatches(liveForm(), liveSession(), prepared) || !constraintStillAllow()) {
-    return {
-      session: unavailable("form does not match the prepared transfer", genesis, attempt),
-      phantomCalled: false,
-    };
+    return refuse("form does not match the prepared transfer", prepared, genesis, input.session.formSnapshot, attempt);
   }
   if (!walletStillFeePayer(liveWallet(), prepared) || !walletStillFeePayer(input.wallet, prepared)) {
-    return {
-      session: unavailable("wallet is not the prepared fee payer", genesis, attempt),
-      phantomCalled: false,
-    };
+    return refuse("wallet is not the prepared fee payer", prepared, genesis, input.session.formSnapshot, attempt);
   }
 
   // Readiness updates finish before the critical section. They are not between
@@ -498,10 +578,7 @@ export async function signIfGated(input: SignInput): Promise<SignOutcome> {
     return invalidated(input, liveSession, prepared, attempt, genesis);
   }
   if (!bindingStillMatches(liveForm(), liveSession(), prepared) || !constraintStillAllow()) {
-    return {
-      session: unavailable("form does not match the prepared transfer", genesis, attempt),
-      phantomCalled: false,
-    };
+    return refuse("form does not match the prepared transfer", prepared, genesis, input.session.formSnapshot, attempt);
   }
 
   let committed;
@@ -533,10 +610,7 @@ export async function signIfGated(input: SignInput): Promise<SignOutcome> {
     };
   }
   if (!committed.ok) {
-    return {
-      session: unavailable(committed.reason, genesis, attempt),
-      phantomCalled: false,
-    };
+    return refuse(committed.reason, prepared, genesis, input.session.formSnapshot, attempt);
   }
 
   let signedTransaction: Transaction;
@@ -685,6 +759,52 @@ function connectedPhantom(wallet: WalletSnapshot): wallet is WalletSnapshot & { 
     typeof wallet.publicKey === "string" &&
     wallet.publicKey.trim() !== ""
   );
+}
+
+function finiteGeneration(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function isBlockhashExpiry(reason: string): boolean {
+  return reason === "blockhash is no longer valid" || reason === "blockhash expired at the current block height";
+}
+
+function refuse(
+  note: string,
+  prepared: PreparedTransfer | null,
+  genesis: LiveGenesisCheck | null,
+  formSnapshot: TransferForm | null,
+  generation: number,
+): SignOutcome {
+  return {
+    session: failed(note, prepared, genesis, formSnapshot, generation),
+    phantomCalled: false,
+  };
+}
+
+function notOpenForSign(session: SigningSession, generation: number): SignOutcome {
+  if (session.readiness === "signed") {
+    return { session, phantomCalled: false };
+  }
+  if (session.readiness === "failed" && session.note.trim() !== "") {
+    return { session, phantomCalled: false };
+  }
+  if (session.readiness === "preparing" && session.note.trim() !== "") {
+    return { session, phantomCalled: false };
+  }
+  if (
+    session.readiness === "unavailable" &&
+    session.note.trim() !== "" &&
+    session.note !== "Waiting for Phantom signTransaction." &&
+    session.note !== "Signing readiness is unavailable."
+  ) {
+    return { session, phantomCalled: false };
+  }
+  const note =
+    session.readiness === "signing" || session.note === "Waiting for Phantom signTransaction."
+      ? "Sign stopped before Phantom. No prepared transfer is open to sign."
+      : "No prepared transfer is ready to sign.";
+  return refuse(note, session.prepared, session.genesis, session.formSnapshot, generation);
 }
 
 function unavailable(note: string, genesis: LiveGenesisCheck | null, generation = 0): SigningSession {
