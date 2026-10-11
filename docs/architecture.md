@@ -146,7 +146,7 @@ ALLOW snapshot (unchanged six-field audit digest)
   -> connected Phantom identity
   -> app DevNet getGenesisHash()
   -> app DevNet getLatestBlockhash()
-  -> one legacy SystemProgram.transfer
+  -> setComputeUnitLimit, setComputeUnitPrice, then one legacy SystemProgram.transfer
   -> SHA-256 of serializeMessage()
   -> signing readiness ready
   -> explicit Sign transaction click
@@ -168,9 +168,13 @@ No step calls `sendTransaction`, `sendRawTransaction`, or `signAndSendTransactio
 
 ### Transaction format
 
-Phase 1 uses the classic `Transaction` from `@solana/web3.js`, not `VersionedTransaction`. A native SOL transfer is one system instruction. It does not need address lookup tables. `serializeMessage()` is the exact message. Immediately before `signTransaction`, that message is compared to the frozen bytes and the matching Transaction is the one passed to Phantom. A field lookalike is not substituted. The critical section does not await and does not run a readiness callback between the comparison and the call.
+Phase 1 uses the classic `Transaction` from `@solana/web3.js`, not `VersionedTransaction`. The signed message is three instructions, in this order: `ComputeBudget` `setComputeUnitLimit` of 1,000 CU, `ComputeBudget` `setComputeUnitPrice` of 1 micro-lamport, then one `SystemProgram.transfer`. It does not need address lookup tables. `serializeMessage()` is the exact message. Immediately before `signTransaction`, that message is compared to the frozen bytes and the matching Transaction is the one passed to Phantom. A field lookalike is not substituted. The critical section does not await and does not run a readiness callback between the comparison and the call.
 
-The transfer cap stays 0.01 SOL, the Phase 0 cap. The fee payer is the connected Phantom public key. The instruction list is only `SystemProgram.transfer`. The hashed bytes include the fee payer, recent blockhash, program id, account metas, header flags, instruction ordering, recipient, and lamports.
+Phantom adds a priority fee on `signTransaction` when a transaction has no signature, has no ComputeBudget priority instruction, and stays under 1232 bytes. A bare transfer is that case. The live DevNet confirm showed a network fee of 0.00008 SOL, the 5,000 lamport base fee plus 75,000 lamports, which is 200,000 CU at 375,000 micro-lamports. The docs name the gate as an existing `computeUnitBudget` or `computeUnitLimit` instruction, so both instructions are fixed inside the hashed message. A price of 0 is not used: the docs do not say a zero price counts as present. 1 micro-lamport is the smallest positive price. With a 1,000 CU limit the prioritization fee ceilings to 1 lamport, so the expected network fee is 0.000005001 SOL. The validator accepts only that instruction set, that order, and those exact data bytes.
+
+Account keys for a normal transfer are the fee payer, the recipient, the system program, then the compute budget program. A self-transfer omits the duplicate recipient: fee payer, system program, compute budget program. Header counts are one required signature, zero readonly signed accounts, and two readonly unsigned accounts. Any other instruction, order, data byte, or account-key order is refused.
+
+The transfer cap stays 0.01 SOL, the Phase 0 cap. The fee payer is the connected Phantom public key. The hashed bytes include the fee payer, recent blockhash, program ids, account metas, header flags, instruction ordering, the fixed compute budget, recipient, and lamports.
 
 ### Prepared state
 
@@ -178,7 +182,7 @@ The prepared record is frozen. It stores the fee payer, the six-field `ApprovedB
 
 ### Blockhash expiry
 
-A new blockhash produces a new message hash. When the stored blockhash is no longer valid, when the current block height is past `lastValidBlockHeight`, or when that check errors or times out, signing readiness becomes unavailable and the session drops the prepared record. The old record is not edited. Its blockhash is not replaced. A later prepare builds a new record and advances a monotonic signing generation. A sign attempt captures that generation and the prepared record it intends to sign. After every await, and again in the synchronous section immediately before `signTransaction`, the attempt aborts when the generation changed, the session no longer holds that same record, the form no longer matches, or the constraint result is no longer ALLOW. Phantom is not called. An in-flight attempt does not sign a record the page has replaced or dropped.
+A new blockhash produces a new message hash. The page shows a countdown from 60 seconds, the short end of the DevNet blockhash window, and tells the signer to sign within about a minute of Prepare. When that window elapses, or the stored blockhash is no longer valid, or the current block height is past `lastValidBlockHeight`, signing status becomes Failed and the note is "Prepared transfer expired. Prepare again." A blockhash check that times out or fails is also Failed, with that reason. The old record is not edited. Its blockhash is not replaced. A later prepare builds a new record and advances a monotonic signing generation. A sign attempt captures that generation and the prepared record it intends to sign. After every await, and again in the synchronous section immediately before `signTransaction`, the attempt aborts when the generation changed, the session no longer holds that same record, the form no longer matches, or the constraint result is no longer ALLOW. Phantom is not called. An in-flight attempt does not sign a record the page has replaced or dropped. A sign refusal shows a reason. Wallet and genesis mismatches on the sign path are Failed. An invalidated attempt stays Unavailable, because the page already dropped that session for a stated reason.
 
 The sign path does not call `getLatestBlockhash`. Rebuild is a new prepare.
 

@@ -14,6 +14,8 @@ import {
 } from "./domain/evaluate";
 import { createPhantomIdentityBinding } from "./app/phantomIdentity";
 import { createPhase1Session } from "./app/phase1Session";
+import { settleUiAction } from "./app/uiCall";
+import { expiryLine } from "./ui/phase1View";
 import type { TransferForm } from "./domain/signingSession";
 import { CONSTRAINT_FIXTURES, DEVNET_TRANSFER, FIXTURE_DESTINATION } from "./fixtures/preview";
 import { renderApp, type RenderState } from "./ui/render";
@@ -126,10 +128,14 @@ async function draw(evaluation: PreviewEvaluation): Promise<void> {
       void recheck(next);
     },
     onPrepare: () => {
-      void runtime.prepare();
+      settleUiAction(runtime.prepare(), "Prepare failed", (reason) => {
+        runtime.failVisible(reason);
+      });
     },
     onSign: () => {
-      void runtime.sign();
+      settleUiAction(runtime.sign(), "Sign failed", (reason) => {
+        runtime.failVisible(reason);
+      });
     },
     onFormInput: () => {
       const next = readForm();
@@ -143,6 +149,7 @@ async function draw(evaluation: PreviewEvaluation): Promise<void> {
       }
     },
   });
+  armPreparedExpiryClock();
 }
 
 async function refresh(resetForm: boolean): Promise<void> {
@@ -270,3 +277,30 @@ function stringField(data: FormData, name: string): string {
 
 phantomIdentity.bind();
 void refresh(true);
+
+let expiryTimer = 0;
+
+function armPreparedExpiryClock(): void {
+  window.clearInterval(expiryTimer);
+  const prepared = runtime.session.prepared;
+  if (runtime.session.readiness !== "ready" || prepared === null) {
+    return;
+  }
+  expiryTimer = window.setInterval(() => {
+    if (runtime.session.prepared !== prepared || runtime.session.readiness !== "ready") {
+      window.clearInterval(expiryTimer);
+      return;
+    }
+    if (runtime.expireIfDue()) {
+      window.clearInterval(expiryTimer);
+      if (currentEvaluation) {
+        void draw(currentEvaluation);
+      }
+      return;
+    }
+    const line = root?.querySelector("[data-testid='prepared-expiry']");
+    if (line) {
+      line.textContent = expiryLine(runtime.session, Date.now());
+    }
+  }, 250);
+}

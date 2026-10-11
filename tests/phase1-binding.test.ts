@@ -7,6 +7,7 @@ import {
   exactTransaction,
   preSignRecheck,
   readSystemTransferMessage,
+  COMPUTE_BUDGET_PROGRAM_ID,
   SYSTEM_PROGRAM_ID,
 } from "../src/domain/nativeTransfer";
 import { runPrepare } from "../src/domain/signingSession";
@@ -73,17 +74,18 @@ describe("exact message binding", () => {
     expect(shape.shape.programId).toBe("11111111111111111111111111111111");
     expect(shape.shape.numRequiredSignatures).toBe(1);
     expect(shape.shape.numReadonlySignedAccounts).toBe(0);
-    expect(shape.shape.numReadonlyUnsignedAccounts).toBe(1);
+    expect(shape.shape.numReadonlyUnsignedAccounts).toBe(2);
     expect(shape.shape.accountKeys).toEqual([
       FEE_PAYER,
       session.prepared?.binding.destination,
       SYSTEM_PROGRAM_ID,
+      COMPUTE_BUDGET_PROGRAM_ID,
     ]);
     expect(shape.shape.instructionAccounts).toEqual([
       FEE_PAYER,
       session.prepared?.binding.destination,
     ]);
-    expect(transaction?.instructions).toHaveLength(1);
+    expect(transaction?.instructions).toHaveLength(3);
   });
 
   it("changes the message hash when a covered field changes", async () => {

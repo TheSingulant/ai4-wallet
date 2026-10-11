@@ -148,8 +148,10 @@ describe("Phantom signTransaction gates", () => {
       sign,
     });
     expect(disconnected.phantomCalled).toBe(false);
-    expect(disconnected.session.readiness).toBe("unavailable");
-    expect(disconnected.session.prepared).toBeNull();
+    expect(disconnected.session.readiness).toBe("failed");
+    expect(disconnected.session.signed).toBeNull();
+    expect(disconnected.session.note).toMatch(/fee payer/);
+    expect(disconnected.session.prepared?.blockhash).toBe(BLOCKHASH_A);
 
     const otherWallet = walletWith(pubkey(6));
     const other = await signIfGated({
@@ -162,8 +164,10 @@ describe("Phantom signTransaction gates", () => {
       sign,
     });
     expect(other.phantomCalled).toBe(false);
-    expect(other.session.readiness).toBe("unavailable");
-    expect(other.session.prepared).toBeNull();
+    expect(other.session.readiness).toBe("failed");
+    expect(other.session.signed).toBeNull();
+    expect(other.session.note).toMatch(/fee payer/);
+    expect(other.session.prepared?.blockhash).toBe(BLOCKHASH_A);
   });
 
   it("rechecks genesis immediately before sign and does not reuse the prepare-time result", async () => {
@@ -193,8 +197,10 @@ describe("Phantom signTransaction gates", () => {
     });
     expect(calls).toBe(1);
     expect(outcome.phantomCalled).toBe(false);
-    expect(outcome.session.readiness).toBe("unavailable");
-    expect(outcome.session.prepared).toBeNull();
+    expect(outcome.session.readiness).toBe("failed");
+    expect(outcome.session.signed).toBeNull();
+    expect(outcome.session.note).toMatch(/not DevNet/);
+    expect(outcome.session.prepared?.blockhash).toBe(BLOCKHASH_A);
     expect(outcome.session.genesis?.ok).toBe(false);
     expect(session.prepared?.blockhash).toBe(BLOCKHASH_A);
   });
@@ -218,8 +224,10 @@ describe("Phantom signTransaction gates", () => {
     });
     expect(signed).toBe(false);
     expect(outcome.phantomCalled).toBe(false);
-    expect(outcome.session.readiness).toBe("unavailable");
-    expect(outcome.session.prepared).toBeNull();
+    expect(outcome.session.readiness).toBe("failed");
+    expect(outcome.session.signed).toBeNull();
+    expect(outcome.session.note).toMatch(/exact message hash mismatch/);
+    expect(outcome.session.prepared).toBe(prepared);
     expect(prepared.messageSha256).not.toBe("");
     expect(prepared.blockhash).toBe(BLOCKHASH_A);
   });
@@ -272,7 +280,9 @@ describe("Phantom signTransaction gates", () => {
       },
     });
     expect(outcome.phantomCalled).toBe(false);
-    expect(outcome.session.readiness).toBe("unavailable");
-    expect(outcome.session.prepared).toBeNull();
+    expect(outcome.session.readiness).toBe("failed");
+    expect(outcome.session.signed).toBeNull();
+    expect(outcome.session.note).toMatch(/form/);
+    expect(outcome.session.prepared?.blockhash).toBe(BLOCKHASH_A);
   });
 });

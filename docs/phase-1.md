@@ -4,7 +4,9 @@ Phase 1 adds a DevNet connect and sign path. It does not broadcast.
 
 The app owns the network. The RPC URL is `https://api.devnet.solana.com`. The wallet remains an identity: connected or not, a public key, and a source. Before a transaction is built, `getGenesisHash()` must equal `EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG`. The same call runs again immediately before Phantom `signTransaction`. A cached boolean is not freshness. Mismatch, a missing hash, a fetch error, and timeout all fail closed.
 
-The transaction is a classic `Transaction`. `VersionedTransaction` is not used. A native SOL transfer does not need address lookup tables, and `serializeMessage()` is the exact message. The Phase 0 cap of 0.01 SOL is unchanged.
+The transaction is a classic `Transaction`. `VersionedTransaction` is not used. The message is `setComputeUnitLimit` (1,000 CU), `setComputeUnitPrice` (1 micro-lamport), then one native SOL transfer. It does not need address lookup tables, and `serializeMessage()` is the exact message. Those compute budget bytes are part of the hashed message so Phantom's priority-fee injection does not rewrite it. The Phase 0 cap of 0.01 SOL is unchanged. The expected network fee is 0.000005001 SOL.
+
+A prepared transfer shows a 60 second countdown. At the end, or when the chain says the blockhash is no longer valid, the status is Failed: "Prepared transfer expired. Prepare again." The old blockhash is not refreshed. Sign within about a minute of Prepare. A sign-path refusal shows a reason. Wallet, genesis, and blockhash guard failures are Failed. An invalidated session stays Unavailable.
 
 The six-field `ApprovedBinding` SHA-256 stays the audit digest, including the known vector for 0.001 SOL. It does not authorize a signature. The sign path requires a second SHA-256 over the legacy message bytes.
 

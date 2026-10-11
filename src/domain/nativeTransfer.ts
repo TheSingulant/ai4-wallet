@@ -1,15 +1,77 @@
-import { Message, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import { ComputeBudgetProgram, Message, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { decodeBase58 } from "./address";
 import { bytesEqual, copyBytes, sha256Bytes } from "./canonical";
 import { DEVNET_GENESIS_HASH } from "./networkAuthority";
 import type { ApprovedBinding } from "./types";
 
 export const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+export const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
 const SYSTEM_TRANSFER_INSTRUCTION = 2;
+const SET_COMPUTE_UNIT_LIMIT = 2;
+const SET_COMPUTE_UNIT_PRICE = 3;
+
+/**
+ * Fixed compute budget inside the signed message.
+ *
+ * Phantom adds its own priority fee on signTransaction when the transaction has
+ * no signature, has no ComputeBudget priority instruction, and stays under 1232
+ * bytes. A bare system transfer is that case. The live DevNet confirm showed a
+ * network fee of 0.00008 SOL, which is the 5,000 lamport base fee plus 75,000
+ * lamports. That priority fee is 200,000 CU at 375,000 micro-lamports.
+ *
+ * The docs name the gate as an existing `computeUnitBudget` or `computeUnitLimit`
+ * instruction, so both instructions are included. A price of 0 is a legal
+ * on-chain price, but the docs do not say a zero price counts as present, and
+ * other wallets overwrite a zero or tiny price. 1 micro-lamport is the smallest
+ * positive SetComputeUnitPrice. The limit is 1,000 CU: the two budget
+ * instructions and a system transfer consume about 450 CU, and
+ * ceil(1000 * 1 / 1_000_000) is 1 lamport. Expected network fee is 0.000005001 SOL.
+ */
+export const FIXED_COMPUTE_UNIT_LIMIT = 1_000;
+export const FIXED_COMPUTE_UNIT_PRICE_MICROLAMPORTS = 1;
+export const BASE_SIGNATURE_FEE_LAMPORTS = 5_000;
+export const MICRO_LAMPORTS_PER_LAMPORT = 1_000_000;
+export const LAMPORTS_PER_SOL = 1_000_000_000;
+/** Solana packet limit. Phantom will not inject a fee that would cross it. */
+export const MAX_SOLANA_TRANSACTION_BYTES = 1232;
+
+export function prioritizationFeeLamports(
+  units: number = FIXED_COMPUTE_UNIT_LIMIT,
+  microLamports: number = FIXED_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+): number {
+  const product = BigInt(units) * BigInt(microLamports);
+  const denom = BigInt(MICRO_LAMPORTS_PER_LAMPORT);
+  return Number((product + denom - 1n) / denom);
+}
+
+export function expectedNetworkFeeLamports(): number {
+  return BASE_SIGNATURE_FEE_LAMPORTS + prioritizationFeeLamports();
+}
+
+/** Little-endian SetComputeUnitLimit data: discriminator 2, then u32 units. */
+export function computeUnitLimitData(units: number = FIXED_COMPUTE_UNIT_LIMIT): Uint8Array {
+  const data = new Uint8Array(5);
+  const view = new DataView(data.buffer);
+  view.setUint8(0, SET_COMPUTE_UNIT_LIMIT);
+  view.setUint32(1, units, true);
+  return data;
+}
+
+/** Little-endian SetComputeUnitPrice data: discriminator 3, then u64 micro-lamports. */
+export function computeUnitPriceData(
+  microLamports: number = FIXED_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+): Uint8Array {
+  const data = new Uint8Array(9);
+  const view = new DataView(data.buffer);
+  view.setUint8(0, SET_COMPUTE_UNIT_PRICE);
+  view.setBigUint64(1, BigInt(microLamports), true);
+  return data;
+}
 
 /**
  * Legacy Transaction.
- * A native SOL transfer is one system instruction and does not need address lookup tables.
+ * Instruction order is setComputeUnitLimit, setComputeUnitPrice, then one system transfer.
+ * It does not need address lookup tables.
  * The bytes Phantom is asked to sign are serializeMessage() on this object.
  */
 export interface ExactTransferShape {
@@ -67,6 +129,10 @@ export function buildLegacySolTransfer(args: {
   });
   transaction.lastValidBlockHeight = args.lastValidBlockHeight;
   transaction.add(
+    ComputeBudgetProgram.setComputeUnitLimit({ units: FIXED_COMPUTE_UNIT_LIMIT }),
+    ComputeBudgetProgram.setComputeUnitPrice({
+      microLamports: FIXED_COMPUTE_UNIT_PRICE_MICROLAMPORTS,
+    }),
     SystemProgram.transfer({
       fromPubkey: args.feePayer,
       toPubkey: args.destination,
@@ -85,16 +151,50 @@ export function readSystemTransferMessage(
   } catch {
     return { ok: false, reason: "transaction message could not be compiled" };
   }
-  if (message.instructions.length !== 1) {
-    return { ok: false, reason: "transaction does not contain exactly one instruction" };
+  if (message.instructions.length !== 3) {
+    return {
+      ok: false,
+      reason:
+        "transaction does not contain exactly the compute budget limit, compute budget price, and system transfer",
+    };
   }
-  const compiled = message.instructions[0];
-  if (!compiled) {
+  const limitIx = message.instructions[0];
+  const priceIx = message.instructions[1];
+  const compiled = message.instructions[2];
+  if (!limitIx || !priceIx || !compiled) {
     return { ok: false, reason: "transaction is missing an instruction" };
+  }
+  const limitProgram = message.accountKeys[limitIx.programIdIndex];
+  if (!limitProgram || limitProgram.toBase58() !== COMPUTE_BUDGET_PROGRAM_ID) {
+    return { ok: false, reason: "first instruction is not the compute budget program" };
+  }
+  if (limitIx.accounts.length !== 0) {
+    return { ok: false, reason: "compute unit limit instruction has unexpected accounts" };
+  }
+  const limitData = decodeInstructionData(limitIx.data);
+  if (!limitData || limitData.byteLength === 0 || limitData[0] !== SET_COMPUTE_UNIT_LIMIT) {
+    return { ok: false, reason: "first instruction is not setComputeUnitLimit" };
+  }
+  if (!bytesEqual(limitData, computeUnitLimitData())) {
+    return { ok: false, reason: "compute unit limit data is not the fixed instruction" };
+  }
+  const priceProgram = message.accountKeys[priceIx.programIdIndex];
+  if (!priceProgram || priceProgram.toBase58() !== COMPUTE_BUDGET_PROGRAM_ID) {
+    return { ok: false, reason: "second instruction is not the compute budget program" };
+  }
+  if (priceIx.accounts.length !== 0) {
+    return { ok: false, reason: "compute unit price instruction has unexpected accounts" };
+  }
+  const priceData = decodeInstructionData(priceIx.data);
+  if (!priceData || priceData.byteLength === 0 || priceData[0] !== SET_COMPUTE_UNIT_PRICE) {
+    return { ok: false, reason: "second instruction is not setComputeUnitPrice" };
+  }
+  if (!bytesEqual(priceData, computeUnitPriceData())) {
+    return { ok: false, reason: "compute unit price data is not the fixed instruction" };
   }
   const programKey = message.accountKeys[compiled.programIdIndex];
   if (!programKey || programKey.toBase58() !== SYSTEM_PROGRAM_ID) {
-    return { ok: false, reason: "instruction program id is not the system program" };
+    return { ok: false, reason: "third instruction is not the system program" };
   }
   if (compiled.accounts.length !== 2) {
     return { ok: false, reason: "system transfer account metas are not source and recipient" };
@@ -115,7 +215,7 @@ export function readSystemTransferMessage(
   if (message.header.numReadonlySignedAccounts !== 0) {
     return { ok: false, reason: "transaction readonly signed account flags are unexpected" };
   }
-  if (message.header.numReadonlyUnsignedAccounts !== 1) {
+  if (message.header.numReadonlyUnsignedAccounts !== 2) {
     return { ok: false, reason: "transaction readonly unsigned account flags are unexpected" };
   }
   const feePayer = transaction.feePayer;
@@ -135,14 +235,14 @@ export function readSystemTransferMessage(
   const selfTransfer = from.equals(to);
   const actual = message.accountKeys.map((key) => key.toBase58());
   const expected = selfTransfer
-    ? [from.toBase58(), SYSTEM_PROGRAM_ID]
-    : [from.toBase58(), to.toBase58(), SYSTEM_PROGRAM_ID];
+    ? [from.toBase58(), SYSTEM_PROGRAM_ID, COMPUTE_BUDGET_PROGRAM_ID]
+    : [from.toBase58(), to.toBase58(), SYSTEM_PROGRAM_ID, COMPUTE_BUDGET_PROGRAM_ID];
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
     return {
       ok: false,
       reason: selfTransfer
-        ? "self-transfer account key ordering is not fee payer, system program"
-        : "account key ordering is not fee payer, recipient, system program",
+        ? "self-transfer account key ordering is not fee payer, system program, compute budget program"
+        : "account key ordering is not fee payer, recipient, system program, compute budget program",
     };
   }
   if (selfTransfer) {
@@ -152,9 +252,20 @@ export function readSystemTransferMessage(
   } else if (fromIndex !== 0 || toIndex !== 1) {
     return { ok: false, reason: "system transfer instruction accounts are not source then recipient" };
   }
-  const programIndex = selfTransfer ? 1 : 2;
-  if (compiled.programIdIndex !== programIndex || message.accountKeys[programIndex]?.toBase58() !== SYSTEM_PROGRAM_ID) {
-    return { ok: false, reason: "system program is not the last account key" };
+  const systemIndex = selfTransfer ? 1 : 2;
+  const computeIndex = selfTransfer ? 2 : 3;
+  if (
+    compiled.programIdIndex !== systemIndex ||
+    message.accountKeys[systemIndex]?.toBase58() !== SYSTEM_PROGRAM_ID
+  ) {
+    return { ok: false, reason: "system program is not in the expected account slot" };
+  }
+  if (
+    limitIx.programIdIndex !== computeIndex ||
+    priceIx.programIdIndex !== computeIndex ||
+    message.accountKeys[computeIndex]?.toBase58() !== COMPUTE_BUDGET_PROGRAM_ID
+  ) {
+    return { ok: false, reason: "compute budget program is not in the expected account slot" };
   }
   return {
     ok: true,
@@ -399,11 +510,17 @@ function bufferSource(bytes: Uint8Array): ArrayBuffer {
   return copy;
 }
 
-function decodeTransferLamports(data: string): number | null {
-  let bytes: Uint8Array;
+function decodeInstructionData(data: string): Uint8Array | null {
   try {
-    bytes = decodeBase58(data);
+    return decodeBase58(data);
   } catch {
+    return null;
+  }
+}
+
+function decodeTransferLamports(data: string): number | null {
+  const bytes = decodeInstructionData(data);
+  if (!bytes) {
     return null;
   }
   if (bytes.byteLength !== 12) {
