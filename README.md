@@ -2,9 +2,16 @@
 
 Constrain authority before you sign.
 
-You sign. AI⁴ cannot move funds.
+> **AI⁴ Wallet Preview. DevNet only. Local signature only. Not broadcast.**
+> **You sign. AI⁴ cannot move funds.**
 
-Phase 1 is a DevNet-only browser preview. It can ask Phantom to sign one prepared SOL transfer. It does not broadcast that transfer. It is not a production wallet.
+## Status
+
+- Released: Phase 1.2 DevNet preview, tag [`phase-1.2-devnet`](https://github.com/TheSingulant/ai4-wallet/releases/tag/phase-1.2-devnet) (GitHub pre-release).
+- Phase 1.2 is a browser preview that can ask Phantom to sign one prepared SOL transfer on Solana DevNet. It does not broadcast that transfer. It is not a production wallet.
+- Not shipped: transaction-risk analysis, policy controls beyond the fixture evaluation described below, and any mainnet support. Future work is not part of this release.
+- Mainnet is not enabled. No security audit has been performed. See [SECURITY.md](SECURITY.md).
+- Project site: https://www.thesingulant.ai/
 
 Identity verification: Preview / Production verifier not active.
 

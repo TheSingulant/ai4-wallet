@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "description": "Phase 1 DevNet preview. Local Phantom signature on an exact SOL transfer. No broadcast.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
